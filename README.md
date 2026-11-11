@@ -22,10 +22,10 @@ ih8sn-test2 是独立实验，软件属性不代表真实 Bootloader 锁定或�
 
 ## Git 仓库
 
-远程仓库：https://github.com/kkgspl0824/SM-G9750 ，主分支为 `main`。
+远程仓库：https://github.com/kkgspl0824/SM-G9750-LOS24 ，主分支为 `main`。
 
 ```sh
-git clone https://github.com/kkgspl0824/SM-G9750.git
+git clone https://github.com/kkgspl0824/SM-G9750-LOS24.git
 ```
 
 完整迁移包及二进制输入不随 Git 上传，需单独保管。
