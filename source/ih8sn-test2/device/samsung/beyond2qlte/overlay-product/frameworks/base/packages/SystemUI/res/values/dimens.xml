@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <!-- AMB644WF01: 69.984 mm / 1440 px = 147.744 mm / 3040 px = 48.6 um/px. -->
+    <item name="pixel_pitch" format="float" type="dimen">48.6</item>
+</resources>

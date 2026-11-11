@@ -35,6 +35,8 @@ DEVICE_PACKAGE_OVERLAYS += \
     $(DEVICE_PATH)/overlay \
     $(DEVICE_PATH)/overlay-lineage
 
+PRODUCT_PACKAGE_OVERLAYS += $(DEVICE_PATH)/overlay-product
+
 # VNDK
 PRODUCT_EXTRA_VNDK_VERSIONS += 30
 
