@@ -1,0 +1,15 @@
+diff --git a/Android.bp b/Android.bp
+index dcb5844..fa4938e 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -124,3 +124,10 @@ cc_test {
+     ],
+     gtest: false,
+ }
++
++// Reuse the platform implementation in the SM-G9750 VNDK 30 compatibility library.
++filegroup {
++    name: "libpower_beyondq_srcs",
++    srcs: ["power.cpp"],
++    visibility: ["//device/samsung/beyond2qlte:__subpackages__"],
++}

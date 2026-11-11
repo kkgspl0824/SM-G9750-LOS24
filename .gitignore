@@ -1,0 +1,54 @@
+# 默认忽略本机工作区；仅开放当前 LOS24 的源码材料。
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+
+!/manifests/
+/manifests/*
+!/manifests/lineage24-runtimefix8-pinned.xml
+
+!/patches/
+/patches/*
+!/patches/los24-runtimefix8/
+
+!/source/
+
+# 原构建脚本保持冻结路径；其余迁移包内容全部留在本地。
+!/rebuild/
+/rebuild/*
+!/rebuild/SM-G9750-LOS24-runtimefix8-20261110/
+/rebuild/SM-G9750-LOS24-runtimefix8-20261110/*
+!/rebuild/SM-G9750-LOS24-runtimefix8-20261110/tools/
+
+# 即使出现在开放的源码目录中，也不纳入生成物、载荷和凭据。
+**/out/
+**/.repo/
+**/__pycache__/
+*.py[cod]
+*.log
+*.img
+*.bin
+*.elf
+*.so
+*.apk
+*.apex
+*.capex
+*.jar
+*.zip
+*.tar
+*.tar.gz
+*.tar.xz
+*.7z
+*.pk8
+*.pem
+*.key
+.env
+.env.*
+adbkey*
+id_rsa*
+id_ed25519*
+
+# ih8sn 上游脚本的无扩展名编译输出。
+/source/ih8sn/system/bin/
+/source/ih8sn-test2/device/samsung/beyond2qlte/compat/ih8sn-test1/ih8sn

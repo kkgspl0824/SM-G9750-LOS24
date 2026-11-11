@@ -1,0 +1,15 @@
+diff --git a/bpfloader/UprobeStatsBpfLoad.cpp b/bpfloader/UprobeStatsBpfLoad.cpp
+index a46d2d6..a326d17 100644
+--- a/bpfloader/UprobeStatsBpfLoad.cpp
++++ b/bpfloader/UprobeStatsBpfLoad.cpp
+@@ -1061,6 +1061,10 @@ void legacyBpfLoader() {
+ }
+ 
+ void load() {
++  if (!android::bpf::isAtLeastKernelVersion(5, 8, 0)) {
++    ALOGI("Skipping UprobeStats probes: BPF ring buffers require kernel 5.8.");
++    return;
++  }
+   if (createBpfFsSubDirectories()) {
+     return;
+   }

@@ -1,0 +1,7 @@
+diff --git a/.find-ignore b/.find-ignore
+new file mode 100644
+index 000000000..9d2941dbd
+--- /dev/null
++++ b/.find-ignore
+@@ -0,0 +1 @@
++# Standalone kernel compiler; its Android 11 module definitions are not platform inputs.

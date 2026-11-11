@@ -1,0 +1,189 @@
+diff --git a/packages/SystemUI/multivalentTests/src/com/android/systemui/deviceentry/domain/interactor/DeviceUnlockedInteractorTest.kt b/packages/SystemUI/multivalentTests/src/com/android/systemui/deviceentry/domain/interactor/DeviceUnlockedInteractorTest.kt
+index fddd02821..e84c05bb7 100644
+--- a/packages/SystemUI/multivalentTests/src/com/android/systemui/deviceentry/domain/interactor/DeviceUnlockedInteractorTest.kt
++++ b/packages/SystemUI/multivalentTests/src/com/android/systemui/deviceentry/domain/interactor/DeviceUnlockedInteractorTest.kt
+@@ -857,6 +857,50 @@ class DeviceUnlockedInteractorTest : SysuiTestCase() {
+             assertThat(isUnlocked).isTrue()
+         }
+ 
++    @Test
++    fun deviceUnlockStatus_isResetToFalse_whenDeviceGoesToSleep_fromApplication() =
++        testScope.runTest {
++            setLockAfterScreenTimeout(5000)
++            kosmos.fakeAuthenticationRepository.fakePowerButtonInstantlyLocks = false
++            val deviceUnlockStatus by collectLastValue(underTest.deviceUnlockStatus)
++
++            kosmos.biometricUnlockInteractor.setBiometricUnlockState(
++                unlockStateInt = BiometricUnlockController.MODE_DISMISS,
++                biometricUnlockSource = BiometricUnlockSource.FINGERPRINT_SENSOR,
++            )
++            runCurrent()
++            assertThat(deviceUnlockStatus?.isUnlocked).isTrue()
++
++            kosmos.powerInteractor.setAsleepForTest(
++                sleepReason = PowerManager.GO_TO_SLEEP_REASON_APPLICATION
++            )
++            runCurrent()
++
++            assertThat(deviceUnlockStatus?.isUnlocked).isFalse()
++        }
++
++    @Test
++    fun deviceUnlockStatus_isResetToFalse_whenDeviceGoesToSleep_fromDeviceAdmin() =
++        testScope.runTest {
++            setLockAfterScreenTimeout(5000)
++            kosmos.fakeAuthenticationRepository.fakePowerButtonInstantlyLocks = false
++            val deviceUnlockStatus by collectLastValue(underTest.deviceUnlockStatus)
++
++            kosmos.biometricUnlockInteractor.setBiometricUnlockState(
++                unlockStateInt = BiometricUnlockController.MODE_DISMISS,
++                biometricUnlockSource = BiometricUnlockSource.FINGERPRINT_SENSOR,
++            )
++            runCurrent()
++            assertThat(deviceUnlockStatus?.isUnlocked).isTrue()
++
++            kosmos.powerInteractor.setAsleepForTest(
++                sleepReason = PowerManager.GO_TO_SLEEP_REASON_DEVICE_ADMIN
++            )
++            runCurrent()
++
++            assertThat(deviceUnlockStatus?.isUnlocked).isFalse()
++        }
++
+     @Test
+     fun deviceUnlockStatus_isResetToFalse_whenDeviceGoesToSleep_fromSleepButton() =
+         testScope.runTest {
+diff --git a/packages/SystemUI/src/com/android/systemui/deviceentry/domain/interactor/DeviceUnlockedInteractor.kt b/packages/SystemUI/src/com/android/systemui/deviceentry/domain/interactor/DeviceUnlockedInteractor.kt
+index 450fe513a..ef31cca13 100644
+--- a/packages/SystemUI/src/com/android/systemui/deviceentry/domain/interactor/DeviceUnlockedInteractor.kt
++++ b/packages/SystemUI/src/com/android/systemui/deviceentry/domain/interactor/DeviceUnlockedInteractor.kt
+@@ -402,7 +402,8 @@ constructor(
+                                         } else if (lastSleepReason == WakeSleepReason.TIMEOUT) {
+                                             flowOf(ExpectLockWithDelay("screen timeout with delay"))
+                                         } else {
+-                                            flowOf(ExpectLockWithDelay("unknown sleep reason"))
++                                            // Application sleep has no delayed-lock timer.
++                                            flowOf(LockImmediately("other sleep reason"))
+                                         }
+                                     } else {
+                                         emptyFlow<LockEvent>()
+diff --git a/services/core/java/com/android/server/notification/NotificationAttentionHelper.java b/services/core/java/com/android/server/notification/NotificationAttentionHelper.java
+index f5756a2d8..4234df4d8 100644
+--- a/services/core/java/com/android/server/notification/NotificationAttentionHelper.java
++++ b/services/core/java/com/android/server/notification/NotificationAttentionHelper.java
+@@ -1086,7 +1086,7 @@ public final class NotificationAttentionHelper {
+             }
+         }
+ 
+-        if (favoritesIncomingCallLights()) {
++        if (favoritesIncomingCallLights() && mLineageNotificationLights != null) {
+             if (!isCallLight(ledNotification) || mUserPresent || isInCall()) {
+                 if (!mLineageNotificationLights.showLightsScreenOn()) {
+                     stopPriorityNotificationLight();
+diff --git a/services/core/java/com/android/server/pm/ResilientAtomicFile.java b/services/core/java/com/android/server/pm/ResilientAtomicFile.java
+index 473ed6136..f7ed3dc96 100644
+--- a/services/core/java/com/android/server/pm/ResilientAtomicFile.java
++++ b/services/core/java/com/android/server/pm/ResilientAtomicFile.java
+@@ -24,6 +24,7 @@ import android.util.Log;
+ import android.util.Slog;
+ 
+ import com.android.internal.annotations.VisibleForTesting;
++import com.android.internal.security.VerityUtils;
+ import com.android.server.security.FileIntegrity;
+ 
+ import libcore.io.IoUtils;
+@@ -151,7 +152,7 @@ final class ResilientAtomicFile implements Closeable {
+                 finalizeOutStream(reserveOutStream);
+             }
+ 
+-            if (doFsVerity) {
++            if (doFsVerity && VerityUtils.isFsVeritySupported()) {
+                 // Protect both main and reserve using fs-verity.
+                 try (ParcelFileDescriptor mainPfd = ParcelFileDescriptor.dup(mainInStream.getFD());
+                      ParcelFileDescriptor copyPfd = ParcelFileDescriptor.dup(reserveInStream.getFD())) {
+diff --git a/services/core/java/com/android/server/wm/TaskPersister.java b/services/core/java/com/android/server/wm/TaskPersister.java
+index 1b3e48de7..ef013b99c 100644
+--- a/services/core/java/com/android/server/wm/TaskPersister.java
++++ b/services/core/java/com/android/server/wm/TaskPersister.java
+@@ -461,6 +461,19 @@ public class TaskPersister implements PersisterQueue.Listener {
+         writeTaskIdsFiles();
+     }
+ 
++    private static void removeObsoleteFiles(ArraySet<Integer> persistentTaskIds, File directory) {
++        // Recents directories are created lazily; an absent directory has nothing to prune.
++        if (Files.notExists(directory.toPath())) {
++            return;
++        }
++        File[] files = directory.listFiles();
++        if (files == null) {
++            Slog.e(TAG, "Unable to list recents directory: " + directory);
++            return;
++        }
++        removeObsoleteFiles(persistentTaskIds, files);
++    }
++
+     private static void removeObsoleteFiles(ArraySet<Integer> persistentTaskIds, File[] files) {
+         if (DEBUG) Slog.d(TAG, "removeObsoleteFiles: persistentTaskIds=" + persistentTaskIds +
+                 " files=" + Arrays.toString(files));
+@@ -519,8 +532,8 @@ public class TaskPersister implements PersisterQueue.Listener {
+             candidateUserIds = mRecentTasks.usersWithRecentsLoadedLocked();
+         }
+         for (int userId : candidateUserIds) {
+-            removeObsoleteFiles(persistentTaskIds, getUserImagesDir(userId).listFiles());
+-            removeObsoleteFiles(persistentTaskIds, getUserTasksDir(userId).listFiles());
++            removeObsoleteFiles(persistentTaskIds, getUserImagesDir(userId));
++            removeObsoleteFiles(persistentTaskIds, getUserTasksDir(userId));
+         }
+     }
+ 
+diff --git a/services/permission/java/com/android/server/permission/access/util/AtomicFileExtensions.kt b/services/permission/java/com/android/server/permission/access/util/AtomicFileExtensions.kt
+index 95ee958f3..b5dc1e0c0 100644
+--- a/services/permission/java/com/android/server/permission/access/util/AtomicFileExtensions.kt
++++ b/services/permission/java/com/android/server/permission/access/util/AtomicFileExtensions.kt
+@@ -19,7 +19,8 @@ package com.android.server.permission.access.util
+ import android.os.FileUtils
+ import android.util.AtomicFile
+ import android.util.Slog
+-import com.android.server.security.FileIntegrity;
++import com.android.internal.security.VerityUtils
++import com.android.server.security.FileIntegrity
+ import java.io.File
+ import java.io.FileInputStream
+ import java.io.FileNotFoundException
+@@ -61,11 +62,13 @@ inline fun AtomicFile.writeWithReserveCopy(block: (FileOutputStream) -> Unit) {
+     } catch (e: Exception) {
+         Slog.e("AccessPersistence", "Failed to write $reserveFile", e)
+     }
+-    try {
+-        FileIntegrity.setUpFsVerity(baseFile)
+-        FileIntegrity.setUpFsVerity(reserveFile)
+-    } catch (e: Exception) {
+-        Slog.e("AccessPersistence", "Failed to verity-protect runtime-permissions", e)
++    if (VerityUtils.isFsVeritySupported()) {
++        try {
++            FileIntegrity.setUpFsVerity(baseFile)
++            FileIntegrity.setUpFsVerity(reserveFile)
++        } catch (e: Exception) {
++            Slog.e("AccessPersistence", "Failed to verity-protect runtime-permissions", e)
++        }
+     }
+ }
+ 
+diff --git a/services/tests/uiservicestests/src/com/android/server/notification/NotificationAttentionHelperTest.java b/services/tests/uiservicestests/src/com/android/server/notification/NotificationAttentionHelperTest.java
+index 34fedd9b1..c4866b266 100644
+--- a/services/tests/uiservicestests/src/com/android/server/notification/NotificationAttentionHelperTest.java
++++ b/services/tests/uiservicestests/src/com/android/server/notification/NotificationAttentionHelperTest.java
+@@ -3355,6 +3355,13 @@ public class NotificationAttentionHelperTest extends UiServiceTestCase {
+         return r;
+     }
+ 
++    @Test
++    @EnableFlags(Flags.FLAG_FAVORITES_INCOMING_CALL_LIGHTS)
++    public void testConstructor_initialLineageLightsCallback() {
++        initAttentionHelper(mTestFlagResolver);
++        assertThat(mAttentionHelper).isNotNull();
++    }
++
+     @Test
+     @EnableFlags(Flags.FLAG_FAVORITES_INCOMING_CALL_LIGHTS)
+     public void testBuzzBeepBlinkLocked_incomingCall_favorite() {
