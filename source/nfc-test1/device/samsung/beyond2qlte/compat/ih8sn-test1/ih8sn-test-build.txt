@@ -1,0 +1,6 @@
+SM-G9750 runtimefix8 ih8sn-test2 2026-11-11
+Experimental; not a certified Samsung system or proof of Play Integrity acceptance.
+ih8sn upstream a05a8b6d8b46866d0309260642eea34c5aad2162, NDK r27b, arm64 API35 static.
+Boot hooks use the existing permissive su debug domain; global SELinux policy unchanged.
+No Android SDK/release/security-patch override. Existing data/signing/AVB profile retained.
+Existing 300-second boot fallback is explicitly started despite user property spoofing.

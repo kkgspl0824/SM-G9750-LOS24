@@ -1,0 +1,21 @@
+diff --git a/zygote/src/child_process.rs b/zygote/src/child_process.rs
+index f6ec741..2d86630 100644
+--- a/zygote/src/child_process.rs
++++ b/zygote/src/child_process.rs
+@@ -81,8 +81,15 @@ pub(crate) fn re_initialize(
+ 
+     // Drop capabilities bounding set if requested
+     if let Some(cap_bound) = spawn_params.cap_bound {
++        // libcap probes the running kernel; old kernels reject newer capability numbers.
++        let max_bits = cap::cap_max_bits() as u32;
++        assert!(max_bits > 0, "Failed to determine kernel capability limit");
+         for flag in cap_bound.complement().iter() {
+-            let cap = Capability::try_from(flag.bits().trailing_zeros()).unwrap();
++            let cap_id = flag.bits().trailing_zeros();
++            if cap_id >= max_bits {
++                continue;
++            }
++            let cap = Capability::try_from(cap_id).unwrap();
+             if cap::cap_within_bound(cap).expect("Failed to check capability bound") {
+                 cap::cap_drop_bound(cap).expect("Failed to drop capability bound");
+             }

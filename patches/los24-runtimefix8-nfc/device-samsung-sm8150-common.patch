@@ -1,0 +1,758 @@
+diff --git a/BoardConfigCommon.mk b/BoardConfigCommon.mk
+index 9c61e2a..828686e 100644
+--- a/BoardConfigCommon.mk
++++ b/BoardConfigCommon.mk
+@@ -5,6 +5,8 @@
+ #
+ 
+ BOARD_VENDOR := samsung
++TARGET_BOARD_PLATFORM := msmnile
++BOARD_USES_QCOM_HARDWARE := true
+ COMMON_PATH := device/samsung/sm8150-common
+ 
+ # Architecture
+@@ -22,7 +24,6 @@ TARGET_2ND_CPU_ABI2 := armeabi
+ TARGET_2ND_CPU_VARIANT := generic
+ TARGET_2ND_CPU_VARIANT_RUNTIME := cortex-a76
+ 
+-TARGET_USES_64_BIT_BINDER := true
+ 
+ # Audio
+ USE_XML_AUDIO_POLICY_CONF := 1
+@@ -55,7 +56,7 @@ TARGET_PRODUCT_PROP += $(COMMON_PATH)/product.prop
+ BOARD_HAS_DOWNLOAD_MODE := true
+ BOARD_INCLUDE_RECOVERY_DTBO := true
+ TARGET_NO_RECOVERY := false
+-TARGET_RECOVERY_PIXEL_FORMAT := "RGBX_8888"
++TARGET_RECOVERY_PIXEL_FORMAT := RGBX_8888
+ TARGET_USERIMAGES_USE_EXT4 := true
+ TARGET_USERIMAGES_USE_F2FS := true
+ TARGET_USES_MKE2FS := true
+@@ -79,11 +80,13 @@ BOARD_ROOT_EXTRA_FOLDERS := \
+     omr
+ 
+ # SELinux
+-include device/qcom/sepolicy/SEPolicy.mk
+-include device/samsung_slsi/sepolicy.mk
++# Qualcomm owns the shared thermal and sensors genfs roots.
++BOARD_SEPOLICY_M4DEFS += samsung_uses_qcom_policy=true
++include device/qcom/sepolicy_vndr/SEPolicy.mk
++include device/samsung_slsi/sepolicy/sepolicy.mk
+ 
+-SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += \
+-    $(COMMON_PATH)/sepolicy/private
++SYSTEM_EXT_PUBLIC_SEPOLICY_DIRS += $(COMMON_PATH)/sepolicy/public
++SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += $(COMMON_PATH)/sepolicy/system_ext
+ 
+ BOARD_VENDOR_SEPOLICY_DIRS += $(COMMON_PATH)/sepolicy/vendor
+ 
+@@ -95,8 +98,6 @@ PRODUCT_SOONG_NAMESPACES += \
+ 
+ # Verified Boot
+ BOARD_AVB_ENABLE := true
+-BOARD_AVB_MAKE_VBMETA_IMAGE_ARGS += --set_hashtree_disabled_flag
+-BOARD_AVB_MAKE_VBMETA_IMAGE_ARGS += --flags 2
+ BOARD_AVB_RECOVERY_KEY_PATH := external/avb/test/data/testkey_rsa4096.pem
+ BOARD_AVB_RECOVERY_ALGORITHM := SHA256_RSA4096
+ BOARD_AVB_RECOVERY_ROLLBACK_INDEX := 1
+diff --git a/common.mk b/common.mk
+index 919093a..04e758d 100644
+--- a/common.mk
++++ b/common.mk
+@@ -6,8 +6,7 @@
+ 
+ COMMON_PATH := device/samsung/sm8150-common
+ 
+-PRODUCT_TARGET_VNDK_VERSION := 29
+-PRODUCT_EXTRA_VNDK_VERSIONS := 30
++PRODUCT_TARGET_VNDK_VERSION := 30
+ 
+ # Enable updating of APEXes
+ $(call inherit-product, $(SRC_TARGET_DIR)/product/updatable_apex.mk)
+@@ -24,11 +23,7 @@ PRODUCT_ENFORCE_RRO_TARGETS += *
+ 
+ # Audio 
+ PRODUCT_PACKAGES += \
+-    audio.a2dp.default
+-
+-# Camera
+-PRODUCT_PACKAGES += \
+-    Snap
++    audio.bluetooth.default
+ 
+ # HotwordEnrollement app permissions
+ PRODUCT_COPY_FILES += \
+@@ -56,7 +51,7 @@ PRODUCT_PACKAGES += \
+ #    android.hardware.power-service.sm8150-libperfmgr
+ 
+ PRODUCT_COPY_FILES += \
+-    $(COMMON_PATH)/configs/powerhint.json:$(TARGET_COPY_OUT_PRODUCT)/vendor_overlay/$(PLATFORM_VNDK_VERSION)/etc/powerhint.json
++    $(COMMON_PATH)/configs/powerhint.json:$(TARGET_COPY_OUT_VENDOR)/etc/powerhint.json
+ 
+ # Recovery
+ PRODUCT_PACKAGES += \
+@@ -86,10 +81,6 @@ PRODUCT_BOOT_JARS += \
+ #PRODUCT_PACKAGES += \
+ #    lineage.touch@1.0-service.sm8150
+ 
+-# Trust HAL
+-PRODUCT_PACKAGES += \
+-    lineage.trust@1.0-service
+-
+ # WiFi
+ PRODUCT_PACKAGES += \
+     WifiOverlay
+diff --git a/compat/Android.bp b/compat/Android.bp
+new file mode 100644
+index 0000000..f5c18c1
+--- /dev/null
++++ b/compat/Android.bp
+@@ -0,0 +1,9 @@
++// Keep the legacy ANT JNI ABI using the platform's real stable JNI implementation.
++cc_library_shared {
++    name: "libnativehelper_ant_compat",
++    whole_static_libs: ["libnativehelper_compat_libc++"],
++    shared_libs: ["liblog"],
++    version_script: "jni-compat.map.txt",
++    compile_multilib: "both",
++    stl: "none",
++}
+diff --git a/compat/jni-compat.map.txt b/compat/jni-compat.map.txt
+new file mode 100644
+index 0000000..1ab9c2c
+--- /dev/null
++++ b/compat/jni-compat.map.txt
+@@ -0,0 +1,6 @@
++LIBNATIVEHELPER_1 {
++    global:
++        jniThrowException;
++    local:
++        *;
++};
+diff --git a/compat/seccomp/samsung.software.media.c2-base-policy b/compat/seccomp/samsung.software.media.c2-base-policy
+new file mode 100644
+index 0000000..fb237ff
+--- /dev/null
++++ b/compat/seccomp/samsung.software.media.c2-base-policy
+@@ -0,0 +1,82 @@
++# Copyright (C) 2019 The Android Open Source Project
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#      http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++
++futex: 1
++# ioctl calls are filtered via the selinux policy.
++ioctl: 1
++sched_yield: 1
++close: 1
++dup: 1
++ppoll: 1
++mprotect: arg2 in ~PROT_EXEC || arg2 in ~PROT_WRITE
++mmap: arg2 in ~PROT_EXEC || arg2 in ~PROT_WRITE
++getuid: 1
++getrlimit: 1
++fstat: 1
++newfstatat: 1
++fstatfs: 1
++memfd_create: 1
++ftruncate: 1
++
++# mremap: Ensure |flags| are (MREMAP_MAYMOVE | MREMAP_FIXED) TODO: Once minijail
++# parser support for '<' is in this needs to be modified to also prevent
++# |old_address| and |new_address| from touching the exception vector page, which
++# on ARM is statically loaded at 0xffff 0000. See
++# http://infocenter.arm.com/help/index.jsp?topic=/com.arm.doc.ddi0211h/Babfeega.html
++# for more details.
++# Match AOSP arm64 C2: bionic atexit grows its table with MREMAP_MAYMOVE.
++mremap: arg3 == 3 || arg3 == MREMAP_MAYMOVE
++munmap: 1
++prctl: 1
++writev: 1
++sigaltstack: 1
++clone: 1
++exit: 1
++lseek: 1
++rt_sigprocmask: 1
++openat: 1
++write: 1
++nanosleep: 1
++setpriority: 1
++set_tid_address: 1
++getdents64: 1
++readlinkat: 1
++read: 1
++pread64: 1
++gettimeofday: 1
++faccessat: 1
++exit_group: 1
++restart_syscall: 1
++rt_sigreturn: 1
++getrandom: 1
++madvise: 1
++
++# crash dump policy additions
++clock_gettime: 1
++getpid: 1
++gettid: 1
++pipe2: 1
++recvmsg: 1
++process_vm_readv: 1
++tgkill: 1
++rt_sigaction: 1
++rt_tgsigqueueinfo: 1
++#mprotect: arg2 in 0x1|0x2
++munmap: 1
++#mmap: arg2 in 0x1|0x2
++geteuid: 1
++getgid: 1
++getegid: 1
++getgroups: 1
++
+diff --git a/extract-files.sh b/extract-files.sh
+index 65c0c17..50c933b 100755
+--- a/extract-files.sh
++++ b/extract-files.sh
+@@ -63,6 +63,9 @@ fi
+ 
+ function blob_fixup() {
+     case "${1}" in
++    lib/libantradio.so|lib64/libantradio.so)
++        "${ANDROID_ROOT}/prebuilts/extract-tools/linux-x86/bin/patchelf-0_18" --replace-needed libnativehelper.so libnativehelper_ant_compat.so "${2}"
++        ;;
+     etc/nfcee_access.xml)
+         sed -i "s/xliff=\"urn:oasis:names:tc:xliff:document:1.2\"/android=\"http:\/\/schemas.android.com\/apk\/res\/android\"/" "${2}"
+         ;;
+diff --git a/lineage.dependencies b/lineage.dependencies
+index 369f784..75d89b8 100644
+--- a/lineage.dependencies
++++ b/lineage.dependencies
+@@ -1,10 +1,12 @@
+ [
+     {
+         "repository": "android_device_samsung_slsi_sepolicy",
+-        "target_path": "device/samsung_slsi/sepolicy"
++        "target_path": "device/samsung_slsi/sepolicy",
++        "branch": "lineage-23.2"
+     },
+     {
+         "repository": "android_hardware_samsung",
+-        "target_path": "hardware/samsung"
++        "target_path": "hardware/samsung",
++        "branch": "lineage-23.2"
+     }
+ ]
+diff --git a/overlay/frameworks/base/core/res/res/values/config.xml b/overlay/frameworks/base/core/res/res/values/config.xml
+index 54b5bdd..a81c9ff 100644
+--- a/overlay/frameworks/base/core/res/res/values/config.xml
++++ b/overlay/frameworks/base/core/res/res/values/config.xml
+@@ -954,11 +954,6 @@
+     <bool name="config_pinnerCameraApp">true</bool>
+     <bool name="config_pinnerHomeApp">true</bool>
+ 
+-    <!-- List of biometric sensors on the device, in decreasing strength. Consumed by AuthService
+-         when registering authenticators with BiometricService. Format must be ID:Modality:Strength,
+-         where: IDs are unique per device, Modality as defined in BiometricAuthenticator.java,
+-         and Strength as defined in Authenticators.java -->
+-    <string-array name="config_biometric_sensors" translatable="false" >
+-        <item>0:2:15</item> <!-- ID0:Fingerprint:Strong -->
+-    </string-array>
++    <!-- The Samsung AIDL HAL supplies sensor properties; do not register a legacy HIDL sensor. -->
++    <string-array name="config_biometric_sensors" translatable="false" />
+ </resources>
+diff --git a/product.prop b/product.prop
+index 6606935..11a4ee6 100644
+--- a/product.prop
++++ b/product.prop
+@@ -1,3 +1,8 @@
+ ro.bluetooth.a2dp_offload.supported=false
+ persist.bluetooth.a2dp_offload.disabled=true
+ vendor.audio.feature.a2dp_offload.enable=false
++
++# Android 16 profile gates default off unless enabled by the device.
++bluetooth.profile.a2dp.source.enabled=true
++bluetooth.profile.avrcp.target.enabled=true
++bluetooth.profile.hfp.ag.enabled=true
+diff --git a/proprietary-files.txt b/proprietary-files.txt
+index 63dc8b2..51fc562 100644
+--- a/proprietary-files.txt
++++ b/proprietary-files.txt
+@@ -1,11 +1,11 @@
+ # ant
+ -lib/libantradio.so
+ -lib64/libantradio.so
+-system_ext/lib/com.qualcomm.qti.ant@1.0.so
+-system_ext/lib64/com.qualcomm.qti.ant@1.0.so
++-system_ext/lib/com.qualcomm.qti.ant@1.0.so
++-system_ext/lib64/com.qualcomm.qti.ant@1.0.so
+ 
+ # aptX - crosshatch-user 11 RQ1A.201205.003 6906706
+-system_ext/lib64/libaptX_encoder.so|df1c89d7af1bb35808d5fe3496b04ba066c10cbc
++-system_ext/lib64/libaptX_encoder.so|df1c89d7af1bb35808d5fe3496b04ba066c10cbc
+ 
+ # Hotword
+ -system_ext/framework/com.android.hotwordenrollment.common.util.jar
+@@ -17,11 +17,11 @@ etc/nfcee_access.xml
+ etc/nfc_key
+ 
+ # Radio
+-system_ext/lib/vendor.qti.imsrtpservice@3.0.so
+-system_ext/lib64/vendor.qti.imsrtpservice@3.0.so
++-system_ext/lib/vendor.qti.imsrtpservice@3.0.so
++-system_ext/lib64/vendor.qti.imsrtpservice@3.0.so
+ 
+ # QTI
+ system_ext/etc/permissions/com.qualcomm.qti.imscmservice.xml
+ etc/permissions/privapp-permissions-qti.xml
+ etc/permissions/qti_telephony_hidl_wrapper.xml
+-etc/sysconfig/qti_whitelist.xml
+\ No newline at end of file
++etc/sysconfig/qti_whitelist.xml
+diff --git a/releasetools/releasetools.py b/releasetools/releasetools.py
+index aa26f22..a11a141 100644
+--- a/releasetools/releasetools.py
++++ b/releasetools/releasetools.py
+@@ -14,39 +14,83 @@
+ # limitations under the License.
+ 
+ import common
++import hashlib
+ import re
+ 
+ def FullOTA_InstallEnd(info):
+-  OTA_InstallEnd(info)
++  OTA_InstallEnd(info, info.input_zip)
+ 
+ def IncrementalOTA_InstallEnd(info):
+-  OTA_InstallEnd(info)
++  OTA_InstallEnd(info, info.target_zip)
+ 
+ def FullOTA_Assertions(info):
+   AddTrustZoneAssertion(info, info.input_zip)
++  AddVbmetaAssertion(info, info.input_zip)
+ 
+ def IncrementalOTA_Assertions(info):
+   AddTrustZoneAssertion(info, info.target_zip)
++  AddVbmetaAssertion(info, info.target_zip)
+ 
+-def AddImage(info, basename, dest):
++def AddImage(info, input_zip, basename, dest):
+   path = "IMAGES/" + basename
+-  if path not in info.input_zip.namelist():
++  if path not in input_zip.namelist():
+     return
+ 
+-  data = info.input_zip.read(path)
+-  common.ZipWriteStr(info.output_zip, basename, data)
+-  info.script.Print("Patching {} image unconditionally...".format(dest.split('/')[-1]))
+-  info.script.AppendExtra('package_extract_file("%s", "%s");' % (basename, dest))
++  data = input_zip.read(path)
++  if basename not in info.output_zip.namelist():
++    common.ZipWriteStr(info.output_zip, basename, data)
++  elif info.output_zip.read(basename) != data:
++    raise ValueError("Conflicting OTA image: " + basename)
++  if basename == "vbmeta.img":
++    info.script.Print("Checking existing vbmeta; keeping this partition unchanged...")
++    # Its entire UFS logical unit is read-only in Recovery; Download Mode writes it.
++    info.script.AppendExtra('assert(%s);' % VbmetaMatches(input_zip))
++  else:
++    info.script.Print("Updating {} image...".format(dest.split('/')[-1]))
++    info.script.AppendExtra('assert(package_extract_file("%s", "%s"));' % (basename, dest))
+ 
+ def AddTrustZoneAssertion(info, input_zip):
+-  android_info = info.input_zip.read("OTA/android-info.txt")
++  android_info = input_zip.read("OTA/android-info.txt").decode("utf-8")
+   m = re.search(r'require\s+version-trustzone\s*=\s*(\S+)', android_info)
+   if m:
+     versions = m.group(1).split('|')
+     if len(versions) and '*' not in versions:
+-      cmd = 'assert(samsung.verify_trustzone(' + ','.join(['"%s"' % tz for tz in versions]) + ') == "1" || abort("ERROR: This package requires firmware from an Android 10 based stock ROM build. Please upgrade firmware and retry!"););'
++      cmd = 'assert(samsung.verify_trustzone(' + ','.join(['"%s"' % tz for tz in versions]) + ') == "1" || abort("ERROR: This package requires matching stock firmware. Please install the required firmware and retry!"););'
+       info.script.AppendExtra(cmd)
+ 
+-def OTA_InstallEnd(info):
+-  AddImage(info, "dtbo.img", "/dev/block/bootdevice/by-name/dtbo")
+-  AddImage(info, "vbmeta.img", "/dev/block/bootdevice/by-name/vbmeta")
+\ No newline at end of file
++def OTA_InstallEnd(info, input_zip):
++  AddImage(info, input_zip, "dtbo.img", "/dev/block/bootdevice/by-name/dtbo")
++  AddImage(info, input_zip, "vbmeta.img", "/dev/block/bootdevice/by-name/vbmeta")
++  AddImage(info, input_zip, "recovery.img", "/dev/block/bootdevice/by-name/recovery")
++def ImageMatches(data, dest):
++  if not data or len(data) % 4096:
++    raise ValueError("Raw partition image must be 4096-byte aligned")
++  return 'range_sha1("%s", "2,0,%d") == "%s"' % (dest, len(data) // 4096, hashlib.sha1(data).hexdigest())
++
++def AddVbmetaAssertion(info, input_zip):
++  match = VbmetaMatches(input_zip)
++  info.script.AppendExtra('assert(%s || abort("ERROR: This package requires its matching vbmeta or the explicitly approved SM-G9750 debug vbmeta."));' % match)
++
++def VbmetaMatches(input_zip):
++  data = input_zip.read("IMAGES/vbmeta.img")
++  dest = "/dev/block/bootdevice/by-name/vbmeta"
++  match = ImageMatches(data, dest)
++  baseline_path = "OTA/smg9750-approved-debug-vbmeta.img"
++  names = set(input_zip.namelist())
++  approved_profile = (len(data) == 4096 and data[:4] == b"AVB0" and
++      int.from_bytes(data[120:124], "big") == 3 and
++      "SYSTEM/build.prop" in names and "RECOVERY/RAMDISK/prop.default" in names and
++      re.search(r"^ro.build.type=userdebug$", input_zip.read("SYSTEM/build.prop").decode(), re.M) and
++      re.search(r"^ro.product.vendor.device=beyond2qlte$", input_zip.read("RECOVERY/RAMDISK/prop.default").decode(), re.M))
++  if baseline_path in names:
++    baseline = input_zip.read(baseline_path)
++    if (not approved_profile or len(baseline) != 4096 or
++        hashlib.sha256(baseline).hexdigest() != "83438dff4b72eaeaf6f773e1695c4d1f4abaedd79a0ac47f38d9bb048fbd6313"):
++      raise ValueError("Debug VBMETA reuse requires the approved flags=3 SM-G9750 userdebug profile")
++  elif not approved_profile:
++    return match
++
++  # Native target-files need no unused image payload to retain this exact approved baseline.
++  approved_match = 'range_sha1("%s", "2,0,1") == "1397b2d33cb3e75a80efc1dd7885b90425477359"' % dest
++  unlocked = '(getprop("ro.boot.vbmeta.device_state") == "unlocked" || getprop("ro.boot.verifiedbootstate") == "orange")'
++  return '(%s && (%s || %s))' % (unlocked, match, approved_match)
+diff --git a/rootdir/etc/init.qcom.rc b/rootdir/etc/init.qcom.rc
+index cd554d7..1eccb5a 100644
+--- a/rootdir/etc/init.qcom.rc
++++ b/rootdir/etc/init.qcom.rc
+@@ -969,52 +969,20 @@ on boot
+     chmod 0664 /sys/class/power_supply/battery/wc_cmd_info
+     chown system radio /sys/class/power_supply/battery/error_cause
+     chmod 0440 /sys/class/power_supply/battery/error_cause
+-    chown system radio /sys/class/power_supply/battery/batt_capacity_max
+-    chmod 0660 /sys/class/power_supply/battery/batt_capacity_max
+     chown radio system /efs/Battery/batt_capacity_max
+     chmod 0664 /efs/Battery/batt_capacity_max
+     chown system radio /sys/class/power_supply/battery/cisd_fullcaprep_max
+     chmod 0660 /sys/class/power_supply/battery/cisd_fullcaprep_max
+-    chown system radio /sys/class/power_supply/battery/cisd_wire_count
+-    chmod 0660 /sys/class/power_supply/battery/cisd_wire_count
+-    chown system radio /sys/class/power_supply/battery/batt_type
+-    chmod 0660 /sys/class/power_supply/battery/batt_type
+-    chown system radio /sys/class/power_supply/battery/cisd_data
+-    chmod 0660 /sys/class/power_supply/battery/cisd_data
+-    chown system radio /sys/class/power_supply/battery/cisd_data_json
+-    chmod 0660 /sys/class/power_supply/battery/cisd_data_json
+-    chown system radio /sys/class/power_supply/battery/cisd_data_d_json
+-    chmod 0660 /sys/class/power_supply/battery/cisd_data_d_json
+     chown system system /efs/FactoryApp/cisd_data
+     chmod 0660 /efs/FactoryApp/cisd_data
+-    chown system radio /sys/class/power_supply/battery/cisd_wc_data
+-    chmod 0660 /sys/class/power_supply/battery/cisd_wc_data
+-    chown system radio /sys/class/power_supply/battery/cisd_wc_data_json
+-    chmod 0660 /sys/class/power_supply/battery/cisd_wc_data_json
+     chown system system /efs/FactoryApp/cisd_wc_data
+     chmod 0660 /efs/FactoryApp/cisd_wc_data
+-    chown system radio /sys/class/power_supply/battery/cisd_power_data
+-    chmod 0660 /sys/class/power_supply/battery/cisd_power_data
+-    chown system radio /sys/class/power_supply/battery/cisd_power_data_json
+-    chmod 0660 /sys/class/power_supply/battery/cisd_power_data_json
+     chown system system /efs/FactoryApp/cisd_power_data
+     chmod 0660 /efs/FactoryApp/cisd_power_data
+-    chown system radio /sys/class/power_supply/battery/cisd_cable_data
+-    chmod 0660 /sys/class/power_supply/battery/cisd_cable_data
+-    chown system radio /sys/class/power_supply/battery/cisd_cable_data_json
+-    chmod 0660 /sys/class/power_supply/battery/cisd_cable_data_json
+     chown system system /efs/FactoryApp/cisd_cable_data
+     chmod 0660 /efs/FactoryApp/cisd_cable_data
+-    chown system radio /sys/class/power_supply/battery/cisd_tx_data
+-    chmod 0660 /sys/class/power_supply/battery/cisd_tx_data
+-    chown system radio /sys/class/power_supply/battery/cisd_tx_data_json
+-    chmod 0660 /sys/class/power_supply/battery/cisd_tx_data_json
+     chown system system /efs/FactoryApp/cisd_tx_data
+     chmod 0660 /efs/FactoryApp/cisd_tx_data
+-    chown system radio /sys/class/power_supply/battery/cisd_event_data
+-    chmod 0660 /sys/class/power_supply/battery/cisd_event_data
+-    chown system radio /sys/class/power_supply/battery/cisd_event_data_json
+-    chmod 0660 /sys/class/power_supply/battery/cisd_event_data_json
+     chown system system /efs/FactoryApp/cisd_event_data
+     chmod 0660 /efs/FactoryApp/cisd_event_data
+     chown system system /sys/class/power_supply/battery/fg_asoc
+diff --git a/sepolicy/public/attributes b/sepolicy/public/attributes
+new file mode 100644
+index 0000000..9ca5183
+--- /dev/null
++++ b/sepolicy/public/attributes
+@@ -0,0 +1,2 @@
++# Shared read interface for system_suspend and vendor battery labels.
++attribute beyondq_battery_sysfs;
+diff --git a/sepolicy/system_ext/property_contexts b/sepolicy/system_ext/property_contexts
+new file mode 100644
+index 0000000..d883ae9
+--- /dev/null
++++ b/sepolicy/system_ext/property_contexts
+@@ -0,0 +1,3 @@
++
++# This existing platform radio property remains owned by the platform type.
++persist.ril.interfaceconf.failed u:object_r:radio_prop:s0 exact
+diff --git a/sepolicy/system_ext/system_suspend.te b/sepolicy/system_ext/system_suspend.te
+new file mode 100644
+index 0000000..129fc22
+--- /dev/null
++++ b/sepolicy/system_ext/system_suspend.te
+@@ -0,0 +1,2 @@
++allow system_suspend beyondq_battery_sysfs:dir r_dir_perms;
++allow system_suspend beyondq_battery_sysfs:file r_file_perms;
+diff --git a/sepolicy/vendor/beyondq-hardware.te b/sepolicy/vendor/beyondq-hardware.te
+new file mode 100644
+index 0000000..df0cc14
+--- /dev/null
++++ b/sepolicy/vendor/beyondq-hardware.te
+@@ -0,0 +1,53 @@
++# Qualcomm/Samsung common policy owns the existing hardware types.
++type sysfs_sec, sysfs_type, fs_type;
++
++typeattribute sysfs_battery beyondq_battery_sysfs;
++typeattribute vendor_sysfs_battery_supply beyondq_battery_sysfs;
++
++allow hal_power sysfs_devices_system_cpu:file rw_file_perms;
++allow hal_power sysfs_sec:file rw_file_perms;
++allow hal_power vendor_latency_device:chr_file rw_file_perms;
++allow hal_power vendor_sysfs_kgsl:file rw_file_perms;
++allow hal_power vendor_sysfs_devfreq:file rw_file_perms;
++
++# Stock health HAL must enumerate the existing battery sysfs labels.
++r_dir_file(hal_health_default, beyondq_battery_sysfs)
++
++allow hal_usb vendor_sysfs_battery_supply:dir r_dir_perms;
++allow hal_usb vendor_sysfs_battery_supply:file rw_file_perms;
++allow vendor_thermal-engine sysfs_battery:dir search;
++
++get_prop(hal_camera, exported_camera_prop)
++get_prop(vendor_hal_perf, exported_camera_prop)
++
++# Keep HXE1 MAX77705 access scoped to its own Type-C subtree.
++type beyondq_usb_typec, fs_type, sysfs_type;
++r_dir_file(hal_usb_default, beyondq_usb_typec)
++allow hal_usb_default beyondq_usb_typec:file rw_file_perms;
++type beyondq_usb_contaminant, fs_type, sysfs_type;
++allow hal_usb_default beyondq_usb_contaminant:file r_file_perms;
++
++# Preserve the stock thermal HAL's read-only battery sensor access.
++r_dir_file(hal_thermal_default, beyondq_battery_sysfs)
++
++# Stock thermal init forwards sys.boot_completed into its vendor namespace.
++set_prop(vendor_init, vendor_thermal_prop)
++
++# HXE1 QBT2000 access for the Samsung fingerprint bridge.
++allow hal_fingerprint_default vendor_qbt_device:chr_file rw_file_perms;
++
++# HXE1 QSEE calls are required after the QBT2000 node opens.
++allow hal_fingerprint_default tee_device:chr_file rw_file_perms;
++allow hal_fingerprint_default efs_file:dir { getattr search };
++type beyondq_fingerprint_calibration, file_type;
++r_dir_file(hal_fingerprint_default, beyondq_fingerprint_calibration)
++
++# Read the Samsung module identifiers without exposing generic sysfs files.
++type beyondq_camera_moduleinfo, fs_type, sysfs_type;
++allow hal_camera_default beyondq_camera_moduleinfo:file r_file_perms;
++
++# HXE1 thermal sensors and CPU-limit monitoring remain read-only.
++type beyondq_thermistor, fs_type, sysfs_type;
++allow hal_thermal_default beyondq_thermistor:file r_file_perms;
++allow hal_thermal_default sysfs_power_writable:file r_file_perms;
++allow hal_usb_default sysfs_battery:dir search;
+diff --git a/sepolicy/vendor/file_contexts b/sepolicy/vendor/file_contexts
+index 81d9b63..d51faf0 100644
+--- a/sepolicy/vendor/file_contexts
++++ b/sepolicy/vendor/file_contexts
+@@ -6,3 +6,46 @@
+ /prism(/.*)?    u:object_r:system_file:s0
+ /spu(/.*)?    u:object_r:spu_file:s0
+ /omr(/.*)?    u:object_r:omr_file:s0
++
++# Power Supply
++/sys/devices/platform/soc/890000.i2c/i2c-0(/.*)?      u:object_r:vendor_sysfs_battery_supply:s0
++/sys/devices/platform/soc/c88000.i2c/i2c-33(/.*)?     u:object_r:vendor_sysfs_battery_supply:s0
++/sys/devices/platform/soc/soc:battery/power_supply(/.*)?    u:object_r:sysfs_battery:s0
++/sys/devices/platform/soc/soc:sec-direct-charger/power_supply(/.*)?    u:object_r:vendor_sysfs_battery_supply:s0
++
++
++# HXE1 service filenames using their existing native vendor domains.
++/vendor/bin/hw/android\.hardware\.biometrics\.fingerprint-service\.samsung\.beyond2qlte u:object_r:hal_fingerprint_default_exec:s0
++/vendor/bin/hw/android\.hardware\.power\.samsung\-service u:object_r:hal_power_default_exec:s0
++/vendor/bin/hw/vendor\.samsung\.hardware\.vibrator@2\.2\-service u:object_r:hal_vibrator_default_exec:s0
++/vendor/bin/hw/vendor\.samsung\.hardware\.biometrics\.fingerprint@3\.0\-service u:object_r:hal_fingerprint_default_exec:s0
++/vendor/bin/hw/vendor\.samsung\.hardware\.light\-service u:object_r:hal_light_default_exec:s0
++/vendor/bin/hw/vendor\.samsung\.hardware\.wifi@2\.0\-service u:object_r:hal_wifi_default_exec:s0
++/vendor/bin/hw/android\.hardware\.usb@1\.3\-service\.coral u:object_r:hal_usb_default_exec:s0
++/vendor/bin/argosd u:object_r:argosd_exec:s0
++/vendor/bin/hw/vendor\.samsung\.hardware\.thermal@1\.0\-service u:object_r:hal_thermal_default_exec:s0
++/vendor/bin/vendor\.samsung\.hardware\.security\.vaultkeeper@2\.0\-service u:object_r:vaultkeeperd_exec:s0
++/vendor/bin/hw/nxp\.android\.hardware\.nfc@1\.1\-service u:object_r:hal_nfc_default_exec:s0
++/vendor/bin/hw/vendor\.samsung\.hardware\.miscpower@2\.0\-service u:object_r:hal_power_default_exec:s0
++/vendor/bin/hw/samsung\.software\.media\.c2@1\.0\-service u:object_r:mediacodec_exec:s0
++/vendor/bin/hw/android\.hardware\.health@2\.1\-service\-samsung u:object_r:hal_health_default_exec:s0
++/vendor/bin/hw/vendor\.samsung\.hardware\.camera\.provider@4\.0\-service u:object_r:hal_camera_default_exec:s0
++/vendor/bin/hw/android\.hardware\.dumpstate@1\.1\-service\-lazy u:object_r:hal_dumpstate_default_exec:s0
++
++# Original Samsung touch IO and calibration state labels.
++/vendor/bin/hw/vendor\.samsung\.hardware\.sysinput@1\.2-service u:object_r:hal_sec_inputdev_default_exec:s0
++/dev/tsp_data[0-9] u:object_r:tsp_data_device:s0
++/dev/tspio u:object_r:tspio_device:s0
++/efs/taas(/.*)? u:object_r:taas_efs_file:s0
++/mnt/vendor/efs/taas(/.*)? u:object_r:taas_efs_file:s0
++
++# Limit factory fingerprint calibration to read-only access.
++/efs/biometrics(/.*)? u:object_r:beyondq_fingerprint_calibration:s0
++/mnt/vendor/efs/biometrics(/.*)? u:object_r:beyondq_fingerprint_calibration:s0
++
++/vendor/bin/hw/android\.hardware\.power-service\.beyond2qlte u:object_r:hal_power_default_exec:s0
++
++# Label only this touch controller input switch, regardless of probe index.
++/sys/devices/platform/soc/c80000\.i2c/i2c-11/11-0048/input/input[0-9]+/enabled u:object_r:sysfs_touchscreen_writable:s0
++
++/dev/pn547 u:object_r:nfc_device:s0
+diff --git a/sepolicy/vendor/genfs_contexts b/sepolicy/vendor/genfs_contexts
+new file mode 100644
+index 0000000..fe748b7
+--- /dev/null
++++ b/sepolicy/vendor/genfs_contexts
+@@ -0,0 +1,26 @@
++
++
++genfscon sysfs /module/rmnet_shs/parameters u:object_r:vendor_sysfs_rmnet:s0
++
++# SM-G9750 BCM4375 power and bluesleep controls; no generic proc/sysfs writes.
++genfscon sysfs /devices/platform/soc/soc:bt_driver/rfkill/rfkill0/state u:object_r:sysfs_bluetooth_writable:s0
++genfscon proc /bluetooth/sleep/lpm u:object_r:proc_bluetooth_writable:s0
++genfscon proc /bluetooth/sleep/btwrite u:object_r:proc_bluetooth_writable:s0
++
++# Actual HXE1 MAX77705 path and read-only moisture indication.
++genfscon sysfs /devices/platform/soc/890000.i2c/i2c-0/0-0066/max77705-usbc/typec u:object_r:beyondq_usb_typec:s0
++genfscon sysfs /devices/virtual/sec/ccic/water u:object_r:beyondq_usb_contaminant:s0
++
++# Exact moduleinfo paths requested by the HXE1 camera HAL.
++genfscon sysfs /devices/virtual/camera/rear/rear_moduleinfo u:object_r:beyondq_camera_moduleinfo:s0
++genfscon sysfs /devices/virtual/camera/rear/rear2_moduleinfo u:object_r:beyondq_camera_moduleinfo:s0
++genfscon sysfs /devices/virtual/camera/rear/rear3_moduleinfo u:object_r:beyondq_camera_moduleinfo:s0
++genfscon sysfs /devices/virtual/camera/rear/rear4_moduleinfo u:object_r:beyondq_camera_moduleinfo:s0
++genfscon sysfs /devices/virtual/camera/front/front_moduleinfo u:object_r:beyondq_camera_moduleinfo:s0
++genfscon sysfs /devices/virtual/camera/front/front2_moduleinfo u:object_r:beyondq_camera_moduleinfo:s0
++genfscon sysfs /devices/virtual/camera/front/front3_moduleinfo u:object_r:beyondq_camera_moduleinfo:s0
++
++# Exact HXE1 thermistor readings.
++genfscon sysfs /devices/virtual/sec/sec-ap-thermistor/temperature u:object_r:beyondq_thermistor:s0
++genfscon sysfs /devices/virtual/sec/sec-pa-thermistor/temperature u:object_r:beyondq_thermistor:s0
++genfscon sysfs /devices/virtual/sec/sec-wf-thermistor/temperature u:object_r:beyondq_thermistor:s0
+diff --git a/sepolicy/vendor/hal_keymaster_default.te b/sepolicy/vendor/hal_keymaster_default.te
+new file mode 100644
+index 0000000..624dda5
+--- /dev/null
++++ b/sepolicy/vendor/hal_keymaster_default.te
+@@ -0,0 +1,3 @@
++# The HXE1 Samsung Keymaster wrapper delegates to the Qualcomm provider.
++binder_call(hal_keymaster_default, vendor_hal_keymaster_qti)
++r_dir_file(hal_keymaster_default, prov_efs_file)
+diff --git a/sepolicy/vendor/hal_power_wakefinger.te b/sepolicy/vendor/hal_power_wakefinger.te
+new file mode 100644
+index 0000000..9e006a0
+--- /dev/null
++++ b/sepolicy/vendor/hal_power_wakefinger.te
+@@ -0,0 +1,5 @@
++# Existing Samsung policy already permits Power HAL to write tsp/cmd.
++allow hal_power_default sysfs_sec:dir search;
++# The frontend delegates non-touch modes to the stock HAL in the same domain.
++allow hal_power_default hal_power_service:service_manager find;
++binder_call(hal_power_default, hal_power_default)
+diff --git a/sepolicy/vendor/hal_sec_inputdev_default.te b/sepolicy/vendor/hal_sec_inputdev_default.te
+new file mode 100644
+index 0000000..9c3c886
+--- /dev/null
++++ b/sepolicy/vendor/hal_sec_inputdev_default.te
+@@ -0,0 +1,29 @@
++# HXE1 secinputdev/sysinput HAL policy, migrated to the current touch sysfs labels.
++hal_attribute(sec_inputdev)
++type hal_sec_inputdev_default, domain;
++type hal_sec_inputdev_default_exec, exec_type, vendor_file_type, file_type;
++init_daemon_domain(hal_sec_inputdev_default)
++hal_server_domain(hal_sec_inputdev_default, hal_sec_inputdev)
++
++type hal_sec_inputdev_hwservice, hwservice_manager_type, protected_hwservice;
++hal_attribute_hwservice(hal_sec_inputdev, hal_sec_inputdev_hwservice)
++hal_client_domain(system_server, hal_sec_inputdev)
++binder_call(hal_sec_inputdev_client, hal_sec_inputdev_server)
++binder_call(hal_sec_inputdev_server, hal_sec_inputdev_client)
++binder_use(hal_sec_inputdev_default)
++hwbinder_use(hal_sec_inputdev_default)
++get_prop(hal_sec_inputdev_default, hwservicemanager_prop)
++
++type tsp_data_device, dev_type;
++type tspio_device, dev_type;
++type taas_efs_file, file_type;
++
++allow hal_sec_inputdev_default { sysfs_sec sysfs_sec_touchscreen sysfs_touchscreen_writable }:dir r_dir_perms;
++allow hal_sec_inputdev_default sysfs_sec_touchscreen:file r_file_perms;
++allow hal_sec_inputdev_default { sysfs_sec sysfs_touchscreen_writable }:file rw_file_perms;
++allow hal_sec_inputdev_default input_device:dir r_dir_perms;
++allow hal_sec_inputdev_default { input_device tsp_data_device tspio_device }:chr_file rw_file_perms;
++allow hal_sec_inputdev_default app_efs_file:dir r_dir_perms;
++allow hal_sec_inputdev_default app_efs_file:{ file lnk_file } r_file_perms;
++allow hal_sec_inputdev_default taas_efs_file:dir create_dir_perms;
++allow hal_sec_inputdev_default taas_efs_file:file create_file_perms;
+diff --git a/sepolicy/vendor/hwservice_contexts b/sepolicy/vendor/hwservice_contexts
+new file mode 100644
+index 0000000..181d44a
+--- /dev/null
++++ b/sepolicy/vendor/hwservice_contexts
+@@ -0,0 +1,14 @@
++
++vendor.samsung.hardware.secinputdev::ISehInputDevice u:object_r:hal_sec_inputdev_hwservice:s0
++vendor.samsung.hardware.sysinput::ISehSysInputDev u:object_r:hal_sec_inputdev_hwservice:s0
++
++# Samsung extensions inherit the permissions of their standard HAL families.
++vendor.samsung.hardware.health::ISehHealth u:object_r:hal_health_hwservice:s0
++vendor.samsung.hardware.wifi::ISehWifi u:object_r:hal_wifi_hwservice:s0
++vendor.samsung.hardware.audio::ISehDevicesFactory u:object_r:hal_audio_hwservice:s0
++vendor.samsung.hardware.camera.provider::ISehCameraProvider u:object_r:hal_camera_hwservice:s0
++vendor.samsung.hardware.thermal::ISehThermal u:object_r:hal_thermal_hwservice:s0
++vendor.samsung.hardware.bluetooth::ISehBluetooth u:object_r:hal_bluetooth_hwservice:s0
++vendor.samsung.hardware.gnss::ISehGnss u:object_r:hal_gnss_hwservice:s0
++
++vendor.nxp.nxpnfc::INxpNfc u:object_r:hal_nfc_hwservice:s0
+diff --git a/sepolicy/vendor/property_contexts b/sepolicy/vendor/property_contexts
+new file mode 100644
+index 0000000..72789d8
+--- /dev/null
++++ b/sepolicy/vendor/property_contexts
+@@ -0,0 +1,7 @@
++
++# Legacy HXE1 camera and sensor properties retain their native vendor owners.
++persist.camera. u:object_r:vendor_camera_prop:s0
++vendor.sensor. u:object_r:vendor_sensors_prop:s0
++
++# Samsung QSEE readiness uses the existing Qualcomm listener property owner.
++vendor.sys.qseecomd.enable u:object_r:vendor_tee_listener_prop:s0 exact bool
+diff --git a/sepolicy/vendor/rmnet.te b/sepolicy/vendor/rmnet.te
+new file mode 100644
+index 0000000..eae879e
+--- /dev/null
++++ b/sepolicy/vendor/rmnet.te
+@@ -0,0 +1,3 @@
++# Only vendor init translates the stock RMNET load properties to builtin controls.
++allow vendor_init vendor_sysfs_rmnet:dir r_dir_perms;
++allow vendor_init vendor_sysfs_rmnet:file rw_file_perms;
+diff --git a/sepolicy/vendor/service_contexts b/sepolicy/vendor/service_contexts
+new file mode 100644
+index 0000000..324b582
+--- /dev/null
++++ b/sepolicy/vendor/service_contexts
+@@ -0,0 +1,2 @@
++
++android.hardware.power.IPower/legacy0 u:object_r:hal_power_service:s0
+diff --git a/sepolicy/vendor/vendor_init_dtapfix.te b/sepolicy/vendor/vendor_init_dtapfix.te
+new file mode 100644
+index 0000000..996cb8b
+--- /dev/null
++++ b/sepolicy/vendor/vendor_init_dtapfix.te
+@@ -0,0 +1,3 @@
++# Restorecon the physical touch input switch at post-fs-data.
++allow vendor_init sysfs:file relabelfrom;
++allow vendor_init sysfs_touchscreen_writable:file relabelto;

@@ -1,0 +1,9 @@
+cc_prebuilt_binary {
+    name: "ih8sn-test1",
+    stem: "ih8sn",
+    srcs: ["ih8sn"],
+    compile_multilib: "64",
+    static_executable: true,
+    strip: { none: true },
+    init_rc: ["ih8sn-test1.rc"],
+}

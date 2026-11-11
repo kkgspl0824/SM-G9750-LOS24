@@ -1,0 +1,12 @@
+diff --git a/model/PublicVolume.cpp b/model/PublicVolume.cpp
+index bf7aaa6..a91fd7e 100644
+--- a/model/PublicVolume.cpp
++++ b/model/PublicVolume.cpp
+@@ -26,6 +26,7 @@
+ #include "fs/Ntfs.h"
+ #include "fs/Vfat.h"
+ 
++#include <algorithm>
+ #include <android-base/logging.h>
+ #include <android-base/properties.h>
+ #include <android-base/stringprintf.h>

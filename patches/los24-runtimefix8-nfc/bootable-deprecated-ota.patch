@@ -1,0 +1,13 @@
+diff --git a/updater/blockimg.cpp b/updater/blockimg.cpp
+index b472a65..e07b65b 100644
+--- a/updater/blockimg.cpp
++++ b/updater/blockimg.cpp
+@@ -2095,7 +2095,7 @@ Value* RangeSha1Fn(const char* name, State* state, const std::vector<std::unique
+     return StringValue("");
+   }
+ 
+-  android::base::unique_fd fd(open(block_device_path.c_str(), O_RDWR));
++  android::base::unique_fd fd(open(block_device_path.c_str(), O_RDONLY));
+   if (fd == -1) {
+     CauseCode cause_code = errno == EIO ? kEioFailure : kFileOpenFailure;
+     ErrorAbort(state, cause_code, "open \"%s\" failed: %s", block_device_path.c_str(),

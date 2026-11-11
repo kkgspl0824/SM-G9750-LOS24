@@ -1,0 +1,319 @@
+diff --git a/common/vendor/cbd.te b/common/vendor/cbd.te
+index d31c89f..7775c91 100644
+--- a/common/vendor/cbd.te
++++ b/common/vendor/cbd.te
+@@ -12,7 +12,7 @@ init_daemon_domain(cbd)
+ allow cbd block_device:dir search;
+ 
+ # /data/vendor/log
+-allow cbd log_vendor_data_file:dir search;
++allow cbd ifelse(samsung_uses_qcom_policy, `true', `vendor_log_file', `log_vendor_data_file'):dir search;
+ 
+ # /data/vendor/log/cbd
+ allow cbd log_cbd_vendor_data_file:dir create_dir_perms;
+@@ -64,4 +64,4 @@ allow cbd vendor_shell_exec:file execute_no_trans;
+ 
+ vndbinder_use(cbd)
+ 
+-get_prop(cbd, vendor_radio_prop)
++get_prop(cbd, vendor_samsung_radio_prop)
+diff --git a/common/vendor/device.te b/common/vendor/device.te
+index 9e69274..20b9d43 100644
+--- a/common/vendor/device.te
++++ b/common/vendor/device.te
+@@ -13,7 +13,7 @@ type steady_block_device, dev_type;
+ type vbmeta_block_device, dev_type;
+ 
+ type bbd_device, dev_type;
+-type cpu_dma_device, dev_type;
++ifelse(samsung_uses_qcom_policy, `true', `', `type cpu_dma_device, dev_type;')
+ type dit_device, dev_type;
+ type drb_device, dev_type;
+ type epic_device, dev_type;
+diff --git a/common/vendor/file.te b/common/vendor/file.te
+index 725fd52..1d46bca 100644
+--- a/common/vendor/file.te
++++ b/common/vendor/file.te
+@@ -5,15 +5,18 @@ type biometrics_vendor_data_file, file_type, data_file_type;
+ type conn_vendor_data_file, file_type, data_file_type;
+ type data_eden_file, file_type, data_file_type;
+ type data_eden_gpu_file, file_type, data_file_type;
++# Qualcomm's renamed display policy already declares this type.
++ifdef(`display_vendor_data_file', `', `
+ type display_vendor_data_file, file_type, data_file_type;
++')
+ type gps_vendor_data_file, file_type, data_file_type;
+-type log_vendor_data_file, file_type, data_file_type;
++ifelse(samsung_uses_qcom_policy, `true', `', `type log_vendor_data_file, file_type, data_file_type;')
+ type log_cbd_vendor_data_file, file_type, data_file_type;
+ type npu_vendor_data_file, file_type, data_file_type;
+ type radio_vendor_data_file, file_type, data_file_type;
+ type sysfs_npu_version, sysfs_type, r_fs_type, fs_type;
+ type thermal_vendor_data_file, file_type, data_file_type;
+-type wifi_vendor_data_file, file_type, data_file_type;
++ifelse(samsung_uses_qcom_policy, `true', `', `type wifi_vendor_data_file, file_type, data_file_type;')
+ 
+ # EFS
+ type app_efs_file, file_type;
+@@ -70,4 +73,6 @@ type sysfs_wifi_writable, sysfs_type, rw_fs_type, fs_type;
+ 
+ ### VENDOR
+ type vendor_eden_gpu_vendor_file, file_type, vendor_file_type;
++ifdef(`display_vendor_data_file', `', `
+ type vendor_firmware_file, file_type, vendor_file_type;
++')
+diff --git a/common/vendor/file_contexts b/common/vendor/file_contexts
+index 9c66f52..2b315cf 100644
+--- a/common/vendor/file_contexts
++++ b/common/vendor/file_contexts
+@@ -5,10 +5,12 @@
+ /data/vendor/conn(/.*)?                      u:object_r:conn_vendor_data_file:s0
+ /data/vendor/eden(/.*)?                      u:object_r:data_eden_file:s0
+ /data/vendor/eden/gpu(/.*)?                  u:object_r:data_eden_gpu_file:s0
++ifdef(`display_vendor_data_file', `', `
+ /data/vendor/display(/.*)?                   u:object_r:display_vendor_data_file:s0
++')
+ /data/vendor/gps(/.*)?                       u:object_r:gps_vendor_data_file:s0
+-/data/vendor/wifi(/.*)?                      u:object_r:wifi_vendor_data_file:s0
+-/data/vendor/log(/.*)?                       u:object_r:log_vendor_data_file:s0
++ifelse(samsung_uses_qcom_policy, `true', `', `/data/vendor/wifi(/.*)?                      u:object_r:wifi_vendor_data_file:s0')
++ifelse(samsung_uses_qcom_policy, `true', `', `/data/vendor/log(/.*)?                       u:object_r:log_vendor_data_file:s0')
+ /data/vendor/log/cbd(/.*)?                   u:object_r:log_cbd_vendor_data_file:s0
+ /data/vendor/secradio(/.*)?                  u:object_r:radio_vendor_data_file:s0
+ /data/vendor/thermal(/.*)?                   u:object_r:thermal_vendor_data_file:s0
+@@ -56,7 +58,7 @@
+ /dev/ttySAC[0-9]                             u:object_r:bt_device:s0
+ 
+ # cpu
+-/dev/cpu_dma_latency                         u:object_r:cpu_dma_device:s0
++ifelse(samsung_uses_qcom_policy, `true', `', `/dev/cpu_dma_latency                         u:object_r:cpu_dma_device:s0')
+ 
+ ### DIT device
+ /dev/dit                                     u:object_r:dit_device:s0
+@@ -76,8 +78,8 @@
+ /dev/ttyBCM[0-9]*                            u:object_r:bbd_device:s0
+ 
+ ### NFC
+-/dev/sec-nfc                                 u:object_r:nfc_device:s0
+-/dev/st21nfc                                 u:object_r:nfc_device:s0
++ifelse(samsung_uses_qcom_policy, `true', `', `/dev/sec-nfc                                 u:object_r:nfc_device:s0')
++ifelse(samsung_uses_qcom_policy, `true', `', `/dev/st21nfc                                 u:object_r:nfc_device:s0')
+ 
+ ### NPU
+ /dev/vertex10                                u:object_r:npu_device:s0
+diff --git a/common/vendor/genfs_contexts b/common/vendor/genfs_contexts
+index 0c3fa9f..b0fcded 100644
+--- a/common/vendor/genfs_contexts
++++ b/common/vendor/genfs_contexts
+@@ -18,8 +18,8 @@ genfscon sysfs /class/sec/gps                                             u:obje
+ genfscon sysfs /class/sec/sensors                                         u:object_r:sysfs_sec_sensors:s0
+ genfscon sysfs /class/sec/tsp                                             u:object_r:sysfs_sec_touchscreen:s0
+ genfscon sysfs /class/sensor_event                                        u:object_r:sysfs_sensors:s0
+-genfscon sysfs /class/sensors                                             u:object_r:sysfs_sensors:s0
+-genfscon sysfs /class/thermal                                             u:object_r:sysfs_thermal:s0
++ifelse(samsung_uses_qcom_policy, `true', `', `genfscon sysfs /class/sensors                                             u:object_r:sysfs_sensors:s0')
++ifelse(samsung_uses_qcom_policy, `true', `', `genfscon sysfs /class/thermal                                             u:object_r:sysfs_thermal:s0')
+ genfscon sysfs /class/timed_output/vibrator/intensity                     u:object_r:sysfs_vibrator:s0
+ genfscon sysfs /class/timed_output/vibrator/multi_freq                    u:object_r:sysfs_vibrator:s0
+ 
+@@ -59,7 +59,7 @@ genfscon sysfs /devices/virtual/sensors/ssp_sensor/shub_file              u:obje
+ genfscon sysfs /devices/virtual/sensors/ssp_sensor/ssp_flush              u:object_r:sysfs_sensors_writable:s0
+ genfscon sysfs /devices/virtual/sec/switch                                u:object_r:sysfs_sec_switch:s0
+ genfscon sysfs /devices/virtual/sec/switch/afc_disable                    u:object_r:sysfs_sec_switch_writable:s0
+-genfscon sysfs /devices/virtual/thermal                                   u:object_r:sysfs_thermal:s0
++ifelse(samsung_uses_qcom_policy, `true', `', `genfscon sysfs /devices/virtual/thermal                                   u:object_r:sysfs_thermal:s0')
+ genfscon sysfs /devices/virtual/timed_output/vibrator/cp_trigger_index    u:object_r:sysfs_vibrator:s0
+ genfscon sysfs /devices/virtual/timed_output/vibrator/intensity           u:object_r:sysfs_vibrator:s0
+ genfscon sysfs /devices/virtual/timed_output/vibrator/multi_freq          u:object_r:sysfs_vibrator:s0
+diff --git a/common/vendor/gpsd.te b/common/vendor/gpsd.te
+index af8e769..cac1a07 100644
+--- a/common/vendor/gpsd.te
++++ b/common/vendor/gpsd.te
+@@ -6,7 +6,7 @@ init_daemon_domain(gpsd)
+ 
+ allow gpsd rild:unix_stream_socket connectto;
+ 
+-get_prop(gpsd, vendor_radio_prop)
++get_prop(gpsd, vendor_samsung_radio_prop)
+ get_prop(gpsd, telephony_config_prop)
+ get_prop(gpsd, exported_config_prop)
+ 
+diff --git a/common/vendor/hal_graphics_composer_default.te b/common/vendor/hal_graphics_composer_default.te
+index 97b819e..5d7c374 100644
+--- a/common/vendor/hal_graphics_composer_default.te
++++ b/common/vendor/hal_graphics_composer_default.te
+@@ -1,4 +1,4 @@
+-set_prop(hal_graphics_composer_default, vendor_hwc_prop)
++set_prop(hal_graphics_composer_default, ifelse(samsung_uses_qcom_policy, `true', `vendor_display_prop', `vendor_hwc_prop'))
+ get_prop(hal_graphics_composer_default, bootanim_system_prop)
+ get_prop(hal_graphics_composer_default, boot_status_prop)
+ 
+diff --git a/common/vendor/hal_power_default.te b/common/vendor/hal_power_default.te
+index 74d70c9..5e8fbba 100644
+--- a/common/vendor/hal_power_default.te
++++ b/common/vendor/hal_power_default.te
+@@ -1,7 +1,7 @@
+ # hal_power_default.te
+ 
+ # /dev/cpu_dma_latency
+-allow hal_power_default cpu_dma_device:chr_file rw_file_perms;
++allow hal_power_default ifelse(samsung_uses_qcom_policy, `true', `vendor_latency_device', `cpu_dma_device'):chr_file rw_file_perms;
+ 
+ # /dev/stune/top-app/schedtune.boost
+ allow hal_power_default cgroup:file rw_file_perms;
+diff --git a/common/vendor/hal_tetheroffload_default.te b/common/vendor/hal_tetheroffload_default.te
+index 0c0cccf..39ef485 100644
+--- a/common/vendor/hal_tetheroffload_default.te
++++ b/common/vendor/hal_tetheroffload_default.te
+@@ -14,6 +14,6 @@ allow hal_tetheroffload_default netd:unix_dgram_socket create_socket_perms;
+ allow hal_tetheroffload_default netd:unix_dgram_socket {read write};
+ 
+ # Register to hwbinder service
+-add_hwservice(hal_tetheroffload_default, hal_tetheroffload_hwservice)
++# Platform hal_attribute_hwservice owns registration for all tetheroffload servers.
+ hwbinder_use(hal_tetheroffload_default)
+ get_prop(hal_tetheroffload_default, hwservicemanager_prop)
+diff --git a/common/vendor/hal_wifi_default.te b/common/vendor/hal_wifi_default.te
+index 98f0b47..244db57 100644
+--- a/common/vendor/hal_wifi_default.te
++++ b/common/vendor/hal_wifi_default.te
+@@ -1,4 +1,4 @@
+ # hal_wifi_default.te
+ 
+ # Needed for wifi hotspot to read sap interface
+-get_prop(hal_wifi_default, vendor_wifi_prop)
++get_prop(hal_wifi_default, vendor_samsung_wifi_prop)
+diff --git a/common/vendor/hal_wifi_hostapd_default.te b/common/vendor/hal_wifi_hostapd_default.te
+index fc048fd..ec3d346 100644
+--- a/common/vendor/hal_wifi_hostapd_default.te
++++ b/common/vendor/hal_wifi_hostapd_default.te
+@@ -1,4 +1,4 @@
+ # hal_wifi_hostapd_default.te
+ 
+ # /data/vendor/wifi/hostapd/hostapd_wlan0.conf
+-r_dir_file(hal_wifi_hostapd_default, wifi_vendor_data_file)
++r_dir_file(hal_wifi_hostapd_default, ifelse(samsung_uses_qcom_policy, `true', `vendor_wifi_vendor_data_file', `wifi_vendor_data_file'))
+diff --git a/common/vendor/hal_wifi_supplicant_default.te b/common/vendor/hal_wifi_supplicant_default.te
+index 17ec008..fb475cb 100644
+--- a/common/vendor/hal_wifi_supplicant_default.te
++++ b/common/vendor/hal_wifi_supplicant_default.te
+@@ -1,8 +1,8 @@
+ # hal_wifi_supplicant_default.te
+ 
+ # /data/vendor/log
+-allow hal_wifi_supplicant_default log_vendor_data_file:dir r_dir_perms;
++allow hal_wifi_supplicant_default ifelse(samsung_uses_qcom_policy, `true', `vendor_log_file', `log_vendor_data_file'):dir r_dir_perms;
+ 
+ # /data/vendor/wifi
+-allow hal_wifi_supplicant_default wifi_vendor_data_file:dir rw_dir_perms;
+-allow hal_wifi_supplicant_default wifi_vendor_data_file:file rw_file_perms;
++allow hal_wifi_supplicant_default ifelse(samsung_uses_qcom_policy, `true', `vendor_wifi_vendor_data_file', `wifi_vendor_data_file'):dir rw_dir_perms;
++allow hal_wifi_supplicant_default ifelse(samsung_uses_qcom_policy, `true', `vendor_wifi_vendor_data_file', `wifi_vendor_data_file'):file rw_file_perms;
+diff --git a/common/vendor/macloader.te b/common/vendor/macloader.te
+index d1f3d0c..8533d05 100644
+--- a/common/vendor/macloader.te
++++ b/common/vendor/macloader.te
+@@ -6,7 +6,7 @@ type macloader_exec, exec_type, vendor_file_type, file_type;
+ # macloader is started by init, type transit from init domain to macloader domain
+ init_daemon_domain(macloader)
+ 
+-set_prop(macloader, vendor_wifi_prop);
++set_prop(macloader, vendor_samsung_wifi_prop);
+ 
+ allow macloader self:capability { net_admin };
+ 
+diff --git a/common/vendor/property.te b/common/vendor/property.te
+index 5599ce2..670adb9 100644
+--- a/common/vendor/property.te
++++ b/common/vendor/property.te
+@@ -1,9 +1,9 @@
+ # property.te
+ 
+ vendor_internal_prop(vendor_cbd_prop)
+-vendor_restricted_prop(vendor_hwc_prop)
+-vendor_internal_prop(vendor_radio_prop)
++ifelse(samsung_uses_qcom_policy, `true', `', `vendor_restricted_prop(vendor_hwc_prop)')
++vendor_internal_prop(vendor_samsung_radio_prop)
+ vendor_internal_prop(vendor_gnss_prop)
+ vendor_internal_prop(vendor_thermal_prop)
+ vendor_internal_prop(vendor_vaultkeeper_prop)
+-vendor_internal_prop(vendor_wifi_prop)
++vendor_internal_prop(vendor_samsung_wifi_prop)
+diff --git a/common/vendor/property_contexts b/common/vendor/property_contexts
+index 4f9dee0..0109be3 100644
+--- a/common/vendor/property_contexts
++++ b/common/vendor/property_contexts
+@@ -1,14 +1,14 @@
+ ### cbd
+ vendor.cbd.                    u:object_r:vendor_cbd_prop:s0
+-persist.vendor.cbd.            u:object_r:vendor_radio_prop:s0
++persist.vendor.cbd.            u:object_r:vendor_samsung_radio_prop:s0
+ 
+ ### hwc
+-persist.vendor.display.        u:object_r:vendor_hwc_prop:s0
+-vendor.display.                u:object_r:vendor_hwc_prop:s0
++ifelse(samsung_uses_qcom_policy, `true', `', `persist.vendor.display.        u:object_r:vendor_hwc_prop:s0')
++ifelse(samsung_uses_qcom_policy, `true', `', `vendor.display.                u:object_r:vendor_hwc_prop:s0')
+ 
+ ### radio
+-ro.vendor.multisim.            u:object_r:vendor_radio_prop:s0
+-ro.vendor.radio.               u:object_r:vendor_radio_prop:s0
++ro.vendor.multisim.            u:object_r:vendor_samsung_radio_prop:s0
++ro.vendor.radio.               u:object_r:vendor_samsung_radio_prop:s0
+ 
+ ## gnss
+ vendor.gnss.                   u:object_r:vendor_gnss_prop:s0
+@@ -21,5 +21,5 @@ ro.vendor.security.vaultkeeper u:object_r:vendor_vaultkeeper_prop:s0
+ vendor.security.vaultkeeper    u:object_r:vendor_vaultkeeper_prop:s0
+ 
+ ### wifi
+-vendor.wifi.                   u:object_r:vendor_wifi_prop:s0
+-ro.vendor.wifi.                u:object_r:vendor_wifi_prop:s0
++vendor.wifi.                   u:object_r:vendor_samsung_wifi_prop:s0
++ro.vendor.wifi.                u:object_r:vendor_samsung_wifi_prop:s0
+diff --git a/common/vendor/rild.te b/common/vendor/rild.te
+index 6bfdc95..0f35b28 100644
+--- a/common/vendor/rild.te
++++ b/common/vendor/rild.te
+@@ -1,6 +1,6 @@
+ # rild.te
+ 
+-get_prop(rild, vendor_radio_prop)
++get_prop(rild, vendor_samsung_radio_prop)
+ 
+ allow rild block_device:dir search;
+ allow rild mnt_vendor_file:dir { getattr search };
+@@ -17,8 +17,8 @@ allow rild gpsd:file r_file_perms;
+ allow rild system_data_file:dir getattr;
+ 
+ # /data/vendor/log
+-allow rild log_vendor_data_file:dir rw_dir_perms;
+-allow rild log_vendor_data_file:file create_file_perms;
++allow rild ifelse(samsung_uses_qcom_policy, `true', `vendor_log_file', `log_vendor_data_file'):dir rw_dir_perms;
++allow rild ifelse(samsung_uses_qcom_policy, `true', `vendor_log_file', `log_vendor_data_file'):file create_file_perms;
+ 
+ # /dev/block/platform/.+/by-name/radio
+ allow rild radio_block_device:blk_file r_file_perms;
+diff --git a/common/vendor/secril_config_svc.te b/common/vendor/secril_config_svc.te
+index 0c42912..a9f2c57 100644
+--- a/common/vendor/secril_config_svc.te
++++ b/common/vendor/secril_config_svc.te
+@@ -21,4 +21,4 @@ allow secril_config_svc efs_file:file r_file_perms;
+ # ro.vendor.radio.default_network
+ get_prop(secril_config_svc, exported_system_prop)
+ set_prop(secril_config_svc, radio_prop)
+-set_prop(secril_config_svc, vendor_radio_prop)
++set_prop(secril_config_svc, vendor_samsung_radio_prop)
+diff --git a/common/vendor/sehradiomanager.te b/common/vendor/sehradiomanager.te
+index 885c7f5..76fa305 100644
+--- a/common/vendor/sehradiomanager.te
++++ b/common/vendor/sehradiomanager.te
+@@ -3,7 +3,7 @@ type sehradiomanager_exec, exec_type, file_type, vendor_file_type;
+ 
+ init_daemon_domain(sehradiomanager)
+ 
+-get_prop(sehradiomanager, vendor_radio_prop)
++get_prop(sehradiomanager, vendor_samsung_radio_prop)
+ get_prop(sehradiomanager, hwservicemanager_prop)
+ binder_call(sehradiomanager, hwservicemanager)
+ binder_call(sehradiomanager, servicemanager)

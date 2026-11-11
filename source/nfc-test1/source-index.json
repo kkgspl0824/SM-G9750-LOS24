@@ -1,0 +1,52 @@
+{
+  "files": {
+    "device/samsung/beyond2qlte/compat/ih8sn-test1/Android.bp": {
+      "sha256": "1d3681f064e825b0a95e28a5add9e299ac0f4a862e0605ac9813c47aa47180a6",
+      "mode": 420
+    },
+    "device/samsung/beyond2qlte/compat/ih8sn-test1/ih8sn-test-build.txt": {
+      "sha256": "63be8f95745068ef81ef2e76e57f47da9c21c41222045024024b914bdbbd3a3a",
+      "mode": 420
+    },
+    "device/samsung/beyond2qlte/compat/ih8sn-test1/ih8sn-test1.rc": {
+      "sha256": "7a881a15d9d02d2635aed7b28a686dea3eb2566029ece7e9acb9bebe60d53868",
+      "mode": 420
+    },
+    "device/samsung/beyond2qlte/compat/ih8sn-test1/ih8sn.conf": {
+      "sha256": "1c2f6564fcbe3040b35a8d09d9af358415a9c4f9571b634b699f77e90c729e7f",
+      "mode": 420
+    },
+    "device/samsung/beyond2qlte/device.mk": {
+      "sha256": "007ace113a3e5e6c36e5230dec612013fe5c1f19c75f53a04d4ebca9fb39d7a3",
+      "mode": 436
+    },
+    "device/samsung/beyond2qlte/overlay-product/frameworks/base/packages/SystemUI/res/values/dimens.xml": {
+      "sha256": "7151867165ba0e2449e86020d1ba675c07d3b94876dd1ccc42486b0e9097111a",
+      "mode": 420
+    },
+    "device/samsung/sm8150-common/sepolicy/vendor/file_contexts": {
+      "sha256": "f1fa2d8609b82e764fbcea1b4c5fab5ed4a7e145199c0370d1853c007c4eb2f9",
+      "mode": 436
+    },
+    "device/samsung/sm8150-common/sepolicy/vendor/hwservice_contexts": {
+      "sha256": "763e526a4959a3fc27ebfde4d733054e4db42001279ec9351fac200baa1fbb0f",
+      "mode": 436
+    }
+  },
+  "ELF_in_complete_kit_only": {
+    "device/samsung/beyond2qlte/compat/ih8sn-test1/ih8sn": "2239a9f7448a14a0a2f468959f039373703d2b0cca07b147a775c3f8e8ad92a0"
+  },
+  "vendor_inputs": {
+    "vendor/samsung/sm8150-common/prebuilt/vendor.img": {
+      "file": "inputs/vendor/vendor-sparse.img",
+      "sha256": "2f7582b2ea8c42474bcbffe788425f815d53aa4591b971413118872b3c0aee0a",
+      "bytes": 1275693832
+    },
+    "vendor/samsung/sm8150-common/prebuilt/vendor.img.target-files.zip": {
+      "file": "inputs/vendor/vendor.img.target-files.zip",
+      "sha256": "40f80178537c592c03781cadbf4538e801dff0458ad7b71119d478c599908cd6",
+      "bytes": 685649678
+    }
+  },
+  "baseline_ROM_sha256": "b9a0a4cb89ba940b0bad2e1fd3148dca9edea64ee9b76b03efb9801c9f9a159d"
+}

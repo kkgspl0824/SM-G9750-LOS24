@@ -1,0 +1,16 @@
+diff --git a/config/version.mk b/config/version.mk
+index bc3fc56..ca8abb7 100644
+--- a/config/version.mk
++++ b/config/version.mk
+@@ -2,9 +2,9 @@ PRODUCT_VERSION_MAJOR = 24
+ PRODUCT_VERSION_MINOR = 0
+ 
+ ifeq ($(LINEAGE_VERSION_APPEND_TIME_OF_DAY),true)
+-    LINEAGE_BUILD_DATE := $(shell date -u +%Y%m%d_%H%M%S)
++    LINEAGE_BUILD_DATE := $(shell date -u -d @$(shell cat $(BUILD_DATETIME_FILE)) +%Y%m%d_%H%M%S)
+ else
+-    LINEAGE_BUILD_DATE := $(shell date -u +%Y%m%d)
++    LINEAGE_BUILD_DATE := $(shell date -u -d @$(shell cat $(BUILD_DATETIME_FILE)) +%Y%m%d)
+ endif
+ 
+ # Set LINEAGE_BUILDTYPE from the env RELEASE_TYPE, for jenkins compat

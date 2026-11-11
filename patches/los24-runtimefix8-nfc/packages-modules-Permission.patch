@@ -1,0 +1,63 @@
+diff --git a/SafetyCenter/Resources/res/raw-v37/safety_center_config.xml b/SafetyCenter/Resources/res/raw-v37/safety_center_config.xml
+index ff3b9b6..785b576 100644
+--- a/SafetyCenter/Resources/res/raw-v37/safety_center_config.xml
++++ b/SafetyCenter/Resources/res/raw-v37/safety_center_config.xml
+@@ -208,6 +208,13 @@
+                 title="@com.android.safetycenter.resources:string/more_settings_title"
+                 summary="@com.android.safetycenter.resources:string/more_settings_summary"
+                 searchTerms="@com.android.safetycenter.resources:string/more_settings_search_terms"/>
+-        </safety-sources-group>
++                    <dynamic-safety-source
++                id="AdvancedProtection"
++                packageName="com.google.android.gms"
++                profile="primary_profile_only"
++                initialDisplayState="hidden"
++                refreshOnPageOpenAllowed="true"
++                notificationsAllowed="true"/>
++</safety-sources-group>
+     </safety-sources-config>
+ </safety-center-config>
+diff --git a/service/java/com/android/permission/persistence/RuntimePermissionsPersistenceImpl.java b/service/java/com/android/permission/persistence/RuntimePermissionsPersistenceImpl.java
+index 1fb0aaa..5346ab1 100644
+--- a/service/java/com/android/permission/persistence/RuntimePermissionsPersistenceImpl.java
++++ b/service/java/com/android/permission/persistence/RuntimePermissionsPersistenceImpl.java
+@@ -20,6 +20,7 @@ import android.annotation.NonNull;
+ import android.annotation.Nullable;
+ import android.content.ApexEnvironment;
+ import android.content.pm.PackageManager;
++import android.os.Build;
+ import android.os.FileUtils;
+ import android.os.UserHandle;
+ import android.util.ArrayMap;
+@@ -82,7 +83,8 @@ public class RuntimePermissionsPersistenceImpl implements RuntimePermissionsPers
+ 
+     RuntimePermissionsPersistenceImpl() {
+         this(file -> {
+-            if (SdkLevel.isAtLeastU()) {
++            if (SdkLevel.isAtLeastU()
++                    && Build.VERSION.DEVICE_INITIAL_SDK_INT >= Build.VERSION_CODES.R) {
+                 FileIntegrity.setUpFsVerity(file);
+             }
+         });
+diff --git a/service/java/com/android/role/persistence/RolesPersistenceImpl.java b/service/java/com/android/role/persistence/RolesPersistenceImpl.java
+index 8382d36..e57616a 100644
+--- a/service/java/com/android/role/persistence/RolesPersistenceImpl.java
++++ b/service/java/com/android/role/persistence/RolesPersistenceImpl.java
+@@ -19,6 +19,7 @@ package com.android.role.persistence;
+ import android.annotation.NonNull;
+ import android.annotation.Nullable;
+ import android.content.ApexEnvironment;
++import android.os.Build;
+ import android.os.FileUtils;
+ import android.os.UserHandle;
+ import android.util.ArrayMap;
+@@ -80,7 +81,8 @@ public class RolesPersistenceImpl implements RolesPersistence {
+ 
+     RolesPersistenceImpl() {
+         this(file -> {
+-            if (SdkLevel.isAtLeastU()) {
++            if (SdkLevel.isAtLeastU()
++                    && Build.VERSION.DEVICE_INITIAL_SDK_INT >= Build.VERSION_CODES.R) {
+                 FileIntegrity.setUpFsVerity(file);
+             }
+         });

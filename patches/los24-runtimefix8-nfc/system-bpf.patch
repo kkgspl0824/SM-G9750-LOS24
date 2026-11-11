@@ -1,0 +1,52 @@
+diff --git a/loader/bpfloader.rs b/loader/bpfloader.rs
+index f23d882..77c224d 100644
+--- a/loader/bpfloader.rs
++++ b/loader/bpfloader.rs
+@@ -49,6 +49,8 @@ const fn kver(a: u32, b: u32, c: u32) -> u32 {
+ }
+ 
+ const KVER_NONE: u32 = kver(0, 0, 0);
++const KVER_5_8: u32 = kver(5, 8, 0);
++const KVER_5_10: u32 = kver(5, 10, 0);
+ const KVER_6_1: u32 = kver(6, 1, 0);
+ const KVER_INF: u32 = 0xFFFFFFFF;
+ 
+@@ -332,8 +334,9 @@ const FILE_ARR: &[BpfFileDesc] = &[
+         filename: "/system/etc/bpf/bpfRingbufProg.bpf",
+         critical: true,
+         skip_on_user: true,
+-        maps: &[MapDesc::new(GID_ROOT, PERM_GRW, "test_ringbuf")],
+-        progs: &[ProgDesc::new(GID_ROOT, "skfilter_ringbuf_test")],
++        // Match the ringbuf map minimum and the test program's declared kernel minimum.
++        maps: &[MapDesc::new_kver(GID_ROOT, PERM_GRW, KVER_5_8, "test_ringbuf")],
++        progs: &[ProgDesc::new_kver(GID_ROOT, KVER_5_10, "skfilter_ringbuf_test")],
+         ..BPF_FILE_DESC_DEFAULT
+     },
+ ];
+@@ -788,4 +791,26 @@ mod tests {
+         assert_eq!(parse_release("6"), (6, 0, 0));
+         assert_eq!(parse_release("android14"), (0, 0, 0));
+     }
++
++    #[test]
++    fn verify_ringbuf_kernel_gates() {
++        let desc = FILE_ARR.iter().find(|f| f.filename.ends_with("/bpfRingbufProg.bpf")).unwrap();
++        assert!(desc.critical && desc.skip_on_user && !desc.allow_missing);
++        assert_eq!(desc.maps.len(), 1);
++        assert_eq!(desc.progs.len(), 1);
++        for (version, map_enabled, prog_enabled) in [
++            (kver(4, 14, 190), false, false),
++            (kver(5, 4, 186), false, false),
++            (kver(5, 7, 255), false, false),
++            (kver(5, 8, 0), true, false),
++            (kver(5, 9, 255), true, false),
++            (kver(5, 10, 0), true, true),
++            (kver(6, 1, 0), true, true),
++        ] {
++            let map = &desc.maps[0];
++            let prog = &desc.progs[0];
++            assert_eq!(version >= map.min_kver && version < map.max_kver, map_enabled);
++            assert_eq!(version >= prog.min_kver && version < prog.max_kver, prog_enabled);
++        }
++    }
+ }

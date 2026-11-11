@@ -1,0 +1,22 @@
+diff --git a/aconfigd/src/main.rs b/aconfigd/src/main.rs
+index e0fc6cd..01843e2 100644
+--- a/aconfigd/src/main.rs
++++ b/aconfigd/src/main.rs
+@@ -80,7 +80,7 @@ fn setup_logger(command: &Command) {
+     };
+ 
+     match command {
+-        Command::EarlyPlatformInit => {
++        Command::EarlyPlatformInit | Command::PlatformInit => {
+             let klog = KernelLog::with_level(log::LevelFilter::Trace).unwrap_or_else(|e| {
+                 handle_error_and_exit(
+                     e,
+@@ -97,7 +97,7 @@ fn setup_logger(command: &Command) {
+             });
+             log::set_max_level(log::LevelFilter::Trace);
+         }
+-        Command::StartSocket | Command::PlatformInit => {
++        Command::StartSocket => {
+             android_logger::init_once(
+                 android_logger::Config::default()
+                     .with_tag("aconfigd_system")
