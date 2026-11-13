@@ -1,0 +1,25 @@
+diff --git a/volume_manager/PublicVolume.cpp b/volume_manager/PublicVolume.cpp
+index b04135f..900722c 100644
+--- a/volume_manager/PublicVolume.cpp
++++ b/volume_manager/PublicVolume.cpp
+@@ -16,6 +16,8 @@
+  */
+ 
+ #include "PublicVolume.h"
++
++#include <algorithm>
+ #include <volume_manager/ResponseCode.h>
+ #include <volume_manager/VolumeManager.h>
+ #include "Utils.h"
+diff --git a/volume_manager/include/volume_manager/VolumeManager.h b/volume_manager/include/volume_manager/VolumeManager.h
+index c2cb8dd..74d653b 100644
+--- a/volume_manager/include/volume_manager/VolumeManager.h
++++ b/volume_manager/include/volume_manager/VolumeManager.h
+@@ -25,6 +25,7 @@
+ #include <list>
+ #include <mutex>
+ #include <string>
++#include <vector>
+ 
+ struct selabel_handle;
+ class NetlinkManager;

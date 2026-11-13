@@ -1,0 +1,12 @@
+diff --git a/protobuf_vendorcompat/Android.bp b/protobuf_vendorcompat/Android.bp
+index dc9273e..f6d8197 100644
+--- a/protobuf_vendorcompat/Android.bp
++++ b/protobuf_vendorcompat/Android.bp
+@@ -1,3 +1,7 @@
++// Lineage supplies arm64-capable variants in the root namespace.
++soong_namespace {
++}
++
+ package {
+     default_applicable_licenses: ["prebuilts_misc_protobuf_vendorcompat_license"],
+ }

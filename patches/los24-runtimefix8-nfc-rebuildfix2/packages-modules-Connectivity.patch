@@ -1,0 +1,285 @@
+diff --git a/bpf/headers/include/bpf/KernelUtils.h b/bpf/headers/include/bpf/KernelUtils.h
+index 1ee34f0..07b4fca 100644
+--- a/bpf/headers/include/bpf/KernelUtils.h
++++ b/bpf/headers/include/bpf/KernelUtils.h
+@@ -42,6 +42,11 @@ static inline unsigned uncachedKernelVersion() {
+     return KVER(kver_major, kver_minor, kver_sub);
+ }
+ 
++static const bool kernelVersionOverridden = []() {
++    char value[PROP_VALUE_MAX];
++    return __system_property_get("ro.bpf.kver_override", value) > 0;
++}();
++
+ static const unsigned kernelVer = uncachedKernelVersion();
+ 
+ static inline unsigned __unused kernelVersion() {
+@@ -87,7 +92,8 @@ static constexpr unsigned minSupportedKernelVer =
+ 
+ static inline bool isAtLeastKernelVersion(unsigned major, unsigned minor, unsigned sub = 0) {
+     unsigned k = KVER(major, minor, sub);
+-    if (k <= minSupportedKernelVer) return true;
++    // Backported kernels must not inherit the build SDK's minimum version.
++    if (!kernelVersionOverridden && k <= minSupportedKernelVer) return true;
+     return kernelVer >= k;
+ }
+ 
+diff --git a/bpf/loader/NetBpfLoad.cpp b/bpf/loader/NetBpfLoad.cpp
+index 7ba3247..879db64 100644
+--- a/bpf/loader/NetBpfLoad.cpp
++++ b/bpf/loader/NetBpfLoad.cpp
+@@ -1576,8 +1576,12 @@ static int doLoad(char** argv, char * const envp[]) {
+     // 25Q4 bumps the kernel requirement up to 5.10
+     // see also: //system/netd/tests/kernel_test.cpp TestKernel510
+     if (isAtLeast25Q4 && !isAtLeastKernelVersion(5, 10)) {
+-        ALOGE("Android 25Q4 requires kernel 5.10.");
+-        return 7;
++        if (!kernelVersionOverridden) {
++            ALOGE("Android 25Q4 requires kernel 5.10.");
++            return 7;
++        }
++        // The 5.4 floor above still applies to explicitly declared BPF backports.
++        ALOGW("Using legacy BPF paths for the device's declared backported kernel ABI.");
+     }
+ 
+     // 26Q4 bumps the kernel requirement up to 5.15
+diff --git a/bpf/progs/dscpPolicy.c b/bpf/progs/dscpPolicy.c
+index 42286d6..916f340 100644
+--- a/bpf/progs/dscpPolicy.c
++++ b/bpf/progs/dscpPolicy.c
+@@ -296,7 +296,12 @@ function void match_policy(struct __sk_buff* skb, const bool ipv4) {
+ // This is likely a Linux kernel bug, as 0 is the default, and PACKET_OUTGOING appears to be
+ // set ONLY in dev_queue_xmit_nit() on skb2 post-clone - ie. on ptype delivered packets
+ // (ie. AF_PACKET/tcpdump on egress) and not on the core packet itself.
++#ifdef BPF_USE_FUNCS
+ DEFINE_BPF_PROG_KVER(schedcls, set_dscp_ether, AID_SYSTEM, 5_15)
++#else
++// The existing bounded scan needs no for_each_map_elem helper.
++DEFINE_BPF_PROG_KVER(schedcls, set_dscp_ether, AID_SYSTEM, 5_4)
++#endif
+ (struct __sk_buff* skb) {
+     if (skb->protocol == htons(ETH_P_IP)) {
+         match_policy(skb, true);
+diff --git a/bpf/progs/include/bpf_helpers.h b/bpf/progs/include/bpf_helpers.h
+index 997636e..457119e 100644
+--- a/bpf/progs/include/bpf_helpers.h
++++ b/bpf/progs/include/bpf_helpers.h
+@@ -306,13 +306,12 @@ static long (*bpf_sk_storage_delete_unsafe) (const void* sk_storage,
+                            MINAPI, MAXAPI)
+ 
+ // Type safe macro to declare a sk storage and related accessor functions.
+-// BPF_MAP_TYPE_SK_STORAGE was introduced in kernel 5.2 but this map requires BTF and
+-// BTF is enabled on kernel 5.10 or higher.
++// Legacy 5.4 BPF backports must provide BTF and the CGROUP_SOCK storage helper.
+ #define DEFINE_BPF_SK_STORAGE_EXT(the_map, ValueType, usr, grp, md, selinux, pindir,    \
+                                   min_api, max_api, mapFlags)                           \
+     DEFINE_BPF_MAP_BASE(the_map, SK_STORAGE, sizeof(uint32_t), sizeof(ValueType),       \
+                         0, usr, grp, md, selinux, pindir,                               \
+-                        KVER_5_10, KVER_INF, min_api, max_api, mapFlags);               \
++                        KVER_5_4, KVER_INF, min_api, max_api, mapFlags);                \
+     DEFINE_LIBBPF_MAP(the_map, SK_STORAGE, uint32_t, ValueType, 0, mapFlags);           \
+     BPF_ANNOTATE_KV_PAIR(the_map, uint32_t, ValueType);                                 \
+                                                                                         \
+diff --git a/bpf/progs/netd.c b/bpf/progs/netd.c
+index e4cd7c9..bcf6d52 100644
+--- a/bpf/progs/netd.c
++++ b/bpf/progs/netd.c
+@@ -666,9 +666,10 @@ procedure bool should_block_loopback_access(const SkbIpPacketData *const packet_
+ 
+ procedure bool should_block_loopback_access_cached(const SkbIpPacketData *const packet_data,
+                                             struct __sk_buff *const skb,
+-                                            const uint32_t sender_uid) {
++                                            const uint32_t sender_uid,
++                                            const struct kver_uint kver) {
+     bool checks_enabled = loopback_checks_enabled();
+-    bool metrics_enabled = loopback_metrics_enabled();
++    bool metrics_enabled = KVER_IS_AT_LEAST(kver, 5, 10) && loopback_metrics_enabled();
+     if (!checks_enabled && !metrics_enabled) return false;
+ 
+     // TCP connections that already passed loopback access check
+@@ -677,6 +678,7 @@ procedure bool should_block_loopback_access_cached(const SkbIpPacketData *const
+     // Remaining TCP will only trigger on SYN to avoid redundant lookups for established connections
+ 
+     struct bpf_sock* sk = skb->sk;
++    if (!KVER_IS_AT_LEAST(kver, 5, 10)) sk = sk ? bpf_sk_fullsock(sk) : NULL;
+     if (!sk) return should_block_loopback_access(packet_data, skb, sender_uid,
+                                                  checks_enabled, metrics_enabled);
+     SkStorageValue *sks = bpf_sk_storage_get(sk, 0, 0);
+@@ -908,7 +910,7 @@ function int bpf_traffic_account(struct __sk_buff* skb,
+ 
+     if (API_IS_AT_LEAST(lvl, 25Q4) && parsed && (match != DROP) && egress.egress
+         && skb->ifindex == 1) {
+-        if (should_block_loopback_access_cached(&packet_data, skb, sock_uid)) {
++        if (should_block_loopback_access_cached(&packet_data, skb, sock_uid, kver)) {
+             match = DROP;
+         }
+     }
+@@ -989,6 +991,12 @@ DEFINE_NETD_BPF_PROG_RANGES(ingress, stats, 5_10, 6_1, 26Q2, MAXAPI)
+     return bpf_traffic_account(skb, INGRESS, KVER_5_10, API(26Q2));
+ }
+ 
++// Retain permission checks and accounting for explicitly backported kernels.
++DEFINE_NETD_BPF_PROG_RANGES(ingress, stats, 5_4, 5_10, 26Q2, MAXAPI)
++(struct __sk_buff* skb) {
++    return bpf_traffic_account(skb, INGRESS, KVER_5_4, API(26Q2));
++}
++
+ // Android 25Q4/26Q1 (full featured)
+ DEFINE_NETD_BPF_PROG_RANGES(ingress, stats, 5_10, INF, 25Q4, 26Q2)
+ (struct __sk_buff* skb) {
+@@ -1045,6 +1053,12 @@ DEFINE_NETD_BPF_PROG_RANGES(egress, stats, 5_10, 6_1, 26Q2, MAXAPI)
+     return bpf_traffic_account(skb, EGRESS, KVER_5_10, API(26Q2));
+ }
+ 
++// Retain permission checks and accounting for explicitly backported kernels.
++DEFINE_NETD_BPF_PROG_RANGES(egress, stats, 5_4, 5_10, 26Q2, MAXAPI)
++(struct __sk_buff* skb) {
++    return bpf_traffic_account(skb, EGRESS, KVER_5_4, API(26Q2));
++}
++
+ // Android 25Q4/26Q1 (full featured)
+ DEFINE_NETD_BPF_PROG_RANGES(egress, stats, 5_10, INF, 25Q4, 26Q2)
+ (struct __sk_buff* skb) {
+@@ -1176,7 +1190,7 @@ function uint8_t get_app_permissions(uint32_t uid) {
+ function int inet_socket_create(struct bpf_sock* sk, const struct kver_uint kver) {
+     uint64_t gid_uid = bpf_get_current_uid_gid();
+ 
+-    if (KVER_IS_AT_LEAST(kver, 5, 10)) {
++    if (KVER_IS_AT_LEAST(kver, 5, 4)) {
+         SkStorageValue *sks = bpf_sk_storage_get(sk, 0, BPF_SK_STORAGE_GET_F_CREATE);
+         if (sks) {
+             sks->cookie = bpf_get_sk_cookie(sk);
+@@ -1208,11 +1222,16 @@ DEFINE_NETD_T_BPF_PROG_KVER(cgroupsock, inet_create, 5_10)
+     return inet_socket_create(sk, KVER_5_10);
+ }
+ 
+-DEFINE_NETD_T_BPF_PROG_KVER_RANGE(cgroupsock, inet_create, 4_14, 5_10)
++DEFINE_NETD_T_BPF_PROG_KVER_RANGE(cgroupsock, inet_create, 4_14, 5_4)
+ (struct bpf_sock* sk) {
+     return inet_socket_create(sk, KVER_4_14);
+ }
+ 
++DEFINE_NETD_T_BPF_PROG_KVER_RANGE(cgroupsock, inet_create, 5_4, 5_10)
++(struct bpf_sock* sk) {
++    return inet_socket_create(sk, KVER_5_4);
++}
++
+ DEFINE_NETD_T_BPF_PROG_KVER(cgroupsockrelease, inet_release, 5_10)
+ (struct bpf_sock* sk) {
+     uint64_t cookie = bpf_get_sk_cookie(sk);
+diff --git a/service/jni/com_android_server_connectivity_BpfEventPoller.cpp b/service/jni/com_android_server_connectivity_BpfEventPoller.cpp
+index 08d2a5f..f6741f4 100644
+--- a/service/jni/com_android_server_connectivity_BpfEventPoller.cpp
++++ b/service/jni/com_android_server_connectivity_BpfEventPoller.cpp
+@@ -29,6 +29,11 @@ using android::net::eventpolling::LoopbackEventHandler;
+ namespace android {
+ 
+ static void nativeInitLoopbackEventConsumer(JNIEnv *env, jclass clazz) {
++    // shortcut: loopback metrics are unavailable on legacy kernels; restore after a ringbuf backport.
++    if (!bpf::isAtLeastKernelVersion(5, 10)) {
++        ALOGI("Loopback access metrics require BPF ring buffers.");
++        return;
++    }
+     LoopbackEventHandler::Start();
+ }
+ 
+diff --git a/service/jni/com_android_server_connectivity_LocalNetEventListener.cpp b/service/jni/com_android_server_connectivity_LocalNetEventListener.cpp
+index 9e1c027..c3242f3 100644
+--- a/service/jni/com_android_server_connectivity_LocalNetEventListener.cpp
++++ b/service/jni/com_android_server_connectivity_LocalNetEventListener.cpp
+@@ -32,6 +32,11 @@ namespace android {
+ using android::net::eventpolling::LocalNetEventHandler;
+ 
+ static jobject nativeGetLocalNetAccessRingbufFd(JNIEnv *env, jclass clazz) {
++    // shortcut: access event reporting is unavailable on legacy kernels; restore after a ringbuf backport.
++    if (!bpf::isAtLeastKernelVersion(5, 10)) {
++        ALOGI("Local network access event reporting requires BPF ring buffers.");
++        return nullptr;
++    }
+     android::base::unique_fd fd = LocalNetEventHandler::GetNewRingbufFd();
+     if (!fd.ok()) {
+         ALOGE("Failed to get local net event ring buffer.");
+diff --git a/service/src/com/android/server/connectivity/LocalNetEventListener.java b/service/src/com/android/server/connectivity/LocalNetEventListener.java
+index e8d495c..0d88c91 100644
+--- a/service/src/com/android/server/connectivity/LocalNetEventListener.java
++++ b/service/src/com/android/server/connectivity/LocalNetEventListener.java
+@@ -23,6 +23,7 @@ import static com.android.server.ConnectivityStatsLog.CORE_NETWORKING_CRITICAL_C
+ import static com.android.server.ConnectivityStatsLog.CORE_NETWORKING_CRITICAL_COUNTS_EVENT_OCCURRED__EVENT_TYPE__CRITICAL_COUNTS_EVENT_TYPE_LOCAL_NETWORK_ACCESS;
+ 
+ import android.annotation.NonNull;
++import android.annotation.Nullable;
+ import android.app.AppOpsManager;
+ import android.content.Context;
+ import android.content.pm.PackageManager;
+@@ -51,7 +52,7 @@ public class LocalNetEventListener {
+     private final PackageManager mPackageManager;
+     private final AppOpsManager mAppOpsManager;
+     private final Dependencies mDeps;
+-    private final FileDescriptor mRingbufFd;
++    @Nullable private final FileDescriptor mRingbufFd;
+     private final Looper mLooper;
+     private final boolean mMetricsEnabled;
+     private final boolean mNoteOpsEnabled;
+@@ -72,10 +73,11 @@ public class LocalNetEventListener {
+         mLooper = looper;
+         mMetricsEnabled = metricsEnabled;
+         mNoteOpsEnabled = noteOpsEnabled;
+-        mRingbufFd = mDeps.getFileDescriptor();
++        mRingbufFd = (metricsEnabled || noteOpsEnabled) ? mDeps.getFileDescriptor() : null;
+     }
+ 
+     public static class Dependencies {
++        @Nullable
+         public FileDescriptor getFileDescriptor() {
+             return nativeGetLocalNetAccessRingbufFd();
+         }
+@@ -98,7 +100,7 @@ public class LocalNetEventListener {
+         if (mStarted) {
+             return;
+         }
+-        if (mMetricsEnabled || mNoteOpsEnabled) {
++        if ((mMetricsEnabled || mNoteOpsEnabled) && mRingbufFd != null) {
+             mLooper.getQueue().addOnFileDescriptorEventListener(mRingbufFd,
+                     EVENT_INPUT | EVENT_ERROR, this::consumeEvents);
+         }
+@@ -110,7 +112,7 @@ public class LocalNetEventListener {
+     // because in the default case we want to use the native library to correctly handle consuming
+     // the ring buffer.
+     private int consumeEvents(FileDescriptor fd, int events) {
+-        if (!mRingbufFd.equals(fd)) {
++        if (!fd.equals(mRingbufFd)) {
+             Log.w(TAG, "Received event for unexpected FD.");
+             return 0; // Stop listening
+         }
+@@ -174,6 +176,7 @@ public class LocalNetEventListener {
+         }
+     }
+ 
++    @Nullable
+     public static native FileDescriptor nativeGetLocalNetAccessRingbufFd();
+ 
+     public static native int[] nativeConsumeAllLocalNetAccessEvents();
+diff --git a/tests/unit/java/com/android/server/connectivity/LocalNetEventListenerTest.java b/tests/unit/java/com/android/server/connectivity/LocalNetEventListenerTest.java
+index 0a509ab..78d569e 100644
+--- a/tests/unit/java/com/android/server/connectivity/LocalNetEventListenerTest.java
++++ b/tests/unit/java/com/android/server/connectivity/LocalNetEventListenerTest.java
+@@ -194,6 +194,19 @@ public class LocalNetEventListenerTest {
+                 Looper.getMainLooper(), false, false);
+         listener.start();
+         triggerEvent();
++        verify(mDeps, never()).getFileDescriptor();
++        verify(mDeps, never()).consumeEvents();
++    }
++
++    @Test
++    public void testLocalNetEventListener_unavailableRingbuf() throws Exception {
++        doReturn(null).when(mDeps).getFileDescriptor();
++        LocalNetEventListener listener = new LocalNetEventListener(mDeps, mContext,
++                Looper.getMainLooper(), true, true);
++        listener.start();
++        listener.start();
++        triggerEvent();
++        verify(mDeps).getFileDescriptor();
+         verify(mDeps, never()).consumeEvents();
+     }
+ 

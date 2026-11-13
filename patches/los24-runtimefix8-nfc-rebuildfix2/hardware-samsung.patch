@@ -1,0 +1,137 @@
+diff --git a/aidl/fingerprint/Android.bp b/aidl/fingerprint/Android.bp
+index 7565911..338a592 100644
+--- a/aidl/fingerprint/Android.bp
++++ b/aidl/fingerprint/Android.bp
+@@ -9,14 +9,7 @@ cc_binary {
+     relative_install_path: "hw",
+     init_rc: ["android.hardware.biometrics.fingerprint-service.samsung.rc"],
+     vintf_fragments: ["android.hardware.biometrics.fingerprint-service.samsung.xml"],
+-    srcs: [
+-        "CancellationSignal.cpp",
+-        "Fingerprint.cpp",
+-        "LegacyHAL.cpp",
+-        "LockoutTracker.cpp",
+-        "Session.cpp",
+-        "service.cpp",
+-    ],
++    srcs: [":samsung_fingerprint_aidl_sources"],
+     shared_libs: [
+         "libbase",
+         "libbinder_ndk",
+@@ -35,3 +28,15 @@ sysprop_library {
+     property_owner: "Vendor",
+     vendor: true,
+ }
++
++filegroup {
++    name: "samsung_fingerprint_aidl_sources",
++    srcs: [
++        "CancellationSignal.cpp",
++        "Fingerprint.cpp",
++        "LegacyHAL.cpp",
++        "LockoutTracker.cpp",
++        "Session.cpp",
++        "service.cpp",
++    ],
++}
+diff --git a/aidl/fingerprint/Fingerprint.cpp b/aidl/fingerprint/Fingerprint.cpp
+index 9fdd68d..a96576e 100644
+--- a/aidl/fingerprint/Fingerprint.cpp
++++ b/aidl/fingerprint/Fingerprint.cpp
+@@ -13,6 +13,7 @@
+ #include <android-base/parseint.h>
+ #include <android-base/strings.h>
+ 
++#include <cstring>
+ #include <fcntl.h>
+ #include <linux/uinput.h>
+ 
+@@ -160,10 +161,15 @@ ndk::ScopedAStatus Fingerprint::createSession(int32_t /*sensorId*/, int32_t user
+ 
+ void Fingerprint::notify(const fingerprint_msg_t* msg) {
+     Fingerprint* thisPtr = sInstance;
+-    if (msg->type == FINGERPRINT_ACQUIRED &&
+-        msg->data.acquired.acquired_info > SEM_FINGERPRINT_EVENT_BASE) {
+-        thisPtr->handleEvent(msg->data.acquired.acquired_info);
+-        return;
++    if (msg->type == FINGERPRINT_ACQUIRED) {
++        // Samsung sends wire values outside the legacy C enum's declared range.
++        int32_t acquiredInfo;
++        static_assert(sizeof(acquiredInfo) == sizeof(msg->data.acquired.acquired_info));
++        std::memcpy(&acquiredInfo, &msg->data.acquired.acquired_info, sizeof(acquiredInfo));
++        if (acquiredInfo > SEM_FINGERPRINT_EVENT_BASE) {
++            thisPtr->handleEvent(acquiredInfo);
++            return;
++        }
+     }
+ 
+     if (thisPtr->mSession == nullptr || thisPtr->mSession->isClosed()) {
+diff --git a/aidl/fingerprint/Legacy2Aidl.h b/aidl/fingerprint/Legacy2Aidl.h
+index c2e20cd..598a7f2 100644
+--- a/aidl/fingerprint/Legacy2Aidl.h
++++ b/aidl/fingerprint/Legacy2Aidl.h
+@@ -20,7 +20,10 @@ namespace hardware {
+ namespace biometrics {
+ namespace fingerprint {
+ 
+-inline void translate(const HardwareAuthToken& authToken, hw_auth_token_t& hat) {
++inline bool translate(const HardwareAuthToken& authToken, hw_auth_token_t& hat) {
++    if (authToken.mac.size() != sizeof(hat.hmac)) return false;
++    hat = {};
++    hat.version = HW_AUTH_TOKEN_VERSION;
+     hat.challenge = authToken.challenge;
+     hat.user_id = authToken.userId;
+     hat.authenticator_id = authToken.authenticatorId;
+@@ -28,6 +31,7 @@ inline void translate(const HardwareAuthToken& authToken, hw_auth_token_t& hat)
+     hat.authenticator_type = htobe32(static_cast<uint32_t>(authToken.authenticatorType));
+     hat.timestamp = htobe64(authToken.timestamp.milliSeconds);
+     std::copy(authToken.mac.begin(), authToken.mac.end(), hat.hmac);
++    return true;
+ }
+ 
+ inline void translate(const hw_auth_token_t& hat, HardwareAuthToken& authToken) {
+@@ -38,7 +42,7 @@ inline void translate(const hw_auth_token_t& hat, HardwareAuthToken& authToken)
+     authToken.authenticatorType =
+             static_cast<keymaster::HardwareAuthenticatorType>(be32toh(hat.authenticator_type));
+     authToken.timestamp.milliSeconds = be64toh(hat.timestamp);
+-    authToken.mac.insert(authToken.mac.begin(), std::begin(hat.hmac), std::end(hat.hmac));
++    authToken.mac.assign(std::begin(hat.hmac), std::end(hat.hmac));
+ }
+ 
+ }  // namespace fingerprint
+diff --git a/aidl/fingerprint/Session.cpp b/aidl/fingerprint/Session.cpp
+index 9b17f41..72884d4 100644
+--- a/aidl/fingerprint/Session.cpp
++++ b/aidl/fingerprint/Session.cpp
+@@ -66,14 +66,16 @@ ndk::ScopedAStatus Session::enroll(const HardwareAuthToken& hat,
+                                    std::shared_ptr<ICancellationSignal>* out) {
+     LOG(INFO) << "enroll";
+ 
++    hw_auth_token_t authToken;
++    if (!translate(hat, authToken)) {
++        return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
++    }
++
+     if (FingerprintHalProperties::force_calibrate().value_or(false)) {
+         mCaptureReady = false;
+         mHal.request(SEM_REQUEST_FORCE_CBGE, 1);
+     }
+ 
+-    hw_auth_token_t authToken;
+-    translate(hat, authToken);
+-
+     int32_t error = mHal.ss_fingerprint_enroll(&authToken, mUserId, 0 /* timeoutSec */);
+     if (error) {
+         LOG(ERROR) << "ss_fingerprint_enroll failed: " << error;
+diff --git a/teegris/Android.bp b/teegris/Android.bp
+index d6e16c6..4c1dd2c 100644
+--- a/teegris/Android.bp
++++ b/teegris/Android.bp
+@@ -22,6 +22,7 @@ prebuilt_etc {
+ 
+ cc_library_headers {
+     name: "libteecl_headers",
++    vendor_available: true,
+     export_include_dirs: ["."],
+ }
+ 

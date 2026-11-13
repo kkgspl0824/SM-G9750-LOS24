@@ -1,0 +1,37 @@
+diff --git a/init/Android.bp b/init/Android.bp
+index 703542f..d73823f 100644
+--- a/init/Android.bp
++++ b/init/Android.bp
+@@ -336,6 +336,19 @@ cc_binary {
+     name: "init_second_stage",
+     defaults: ["init_second_stage_defaults"],
+     static_libs: ["libinit"],
++    // Legacy bootloaders enter /system/bin/init through /init without stage arguments.
++    srcs: select(soong_config_variable("init", "legacy_system_as_root"), {
++        true: [
++            "first_stage_init.cpp",
++            "first_stage_mount.cpp",
++            "first_stage_mount_android.cpp",
++        ],
++        default: [],
++    }),
++    cflags: select(soong_config_variable("init", "legacy_system_as_root"), {
++        true: ["-DLEGACY_SYSTEM_AS_ROOT=1"],
++        default: [],
++    }),
+     visibility: ["//visibility:any_system_partition"],
+     required: [
+         "init.rc",
+diff --git a/init/main.cpp b/init/main.cpp
+index bb09f30..179f734 100644
+--- a/init/main.cpp
++++ b/init/main.cpp
+@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
+         }
+     }
+ 
+-#if defined(FIRST_STAGE_INIT) || defined(RECOVERY)
++#if defined(FIRST_STAGE_INIT) || defined(RECOVERY) || defined(LEGACY_SYSTEM_AS_ROOT)
+     return FirstStageMain(argc, argv);
+ #else
+     LOG(FATAL) << "Second-stage init requires an argument to main()";

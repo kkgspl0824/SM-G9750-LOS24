@@ -1,0 +1,64 @@
+{
+  "files": {
+    "build/soong/bpf/libbpf/libbpf_prog.go": {
+      "sha256": "cf6e362d13bcff7eb4c1c665ec32cc3c4ea306b63d3436b53af47909611c07a7",
+      "mode": 436
+    },
+    "build/soong/cc/builder.go": {
+      "sha256": "486cdc9aa13b41f0a636a4ea7431d3ff18fd10d06e559753986b6e8f63b02e2d",
+      "mode": 436
+    },
+    "build/soong/scripts/reproducible-elf.py": {
+      "sha256": "7651a4bd368eeb66cf1581bc33dd01757f8eb1fc6e21a716db435b504d6ae61b",
+      "mode": 420
+    },
+    "device/samsung/beyond2qlte/BoardConfig.mk": {
+      "sha256": "00ce7dc79cc84cb2ddfd41ffd65b1c0637f609b41bca31b8ace6a7450e1ec5da",
+      "mode": 436
+    },
+    "device/samsung/beyond2qlte/device.mk": {
+      "sha256": "34bd3f5e70f71aef3a54fd3c430a5df2956cabf726b1d6653a85b9a91f02bd61",
+      "mode": 436
+    },
+    "kernel/samsung/sm8150-common/Makefile": {
+      "sha256": "53942750330e88c643da4b033601ecfa991934638eb821ff11d6750806bf97e9",
+      "mode": 509
+    },
+    "kernel/samsung/sm8150-common/certs/Makefile": {
+      "sha256": "6ed9a71675618c090ae8a6431fa5af996f7fab98430ed194dd38e05aef1d7a26",
+      "mode": 509
+    },
+    "kernel/samsung/sm8150-common/drivers/net/wireless/broadcom/bcmdhd_101_16/Makefile": {
+      "sha256": "adb5bf044c5a8601dfdd7a3475420a47c9ecd28d9e82b1803c4f058953aeb722",
+      "mode": 509
+    },
+    "kernel/samsung/sm8150-common/drivers/net/wireless/broadcom/bcmdhd_101_16/dhd_common.c": {
+      "sha256": "eba0a90bc13ae273a6385972668308fed12d081138fd4171072e26a7ea63666f",
+      "mode": 509
+    },
+    "system/apex/apexd/Android.bp": {
+      "sha256": "bb14f11186a1b8113d751e7aaeb36b05faa3a2d3c2b8a19399c5c44f080d8342",
+      "mode": 436
+    },
+    "vendor/lineage/bootanimation/gen-bootanimation.sh": {
+      "sha256": "2207890ce3a135b403ee97dab9ff2c9987f7650bbe3958d2d2c6d315b1352d6e",
+      "mode": 509
+    }
+  },
+  "vendor_seed_inputs": {
+    "vendor/samsung/sm8150-common/prebuilt/vendor.img": {
+      "file": "inputs/vendor/vendor-sparse.img",
+      "sha256": "2f7582b2ea8c42474bcbffe788425f815d53aa4591b971413118872b3c0aee0a",
+      "bytes": 1275693832
+    },
+    "vendor/samsung/sm8150-common/prebuilt/vendor.img.target-files.zip": {
+      "file": "inputs/vendor/vendor.img.target-files.zip",
+      "sha256": "40f80178537c592c03781cadbf4538e801dff0458ad7b71119d478c599908cd6",
+      "bytes": 685649678
+    }
+  },
+  "baseline_A_ROM_sha256": "530016d7eaae9b83cac2565c1cc3341d6b685c8744de5e9d86bcba552e312e68",
+  "complete_kit_required_for_binaries_and_full_reproduction": true,
+  "kernel_module_signing_input": "Private fixed key is only in the complete kit inputs; not included in Git.",
+  "fixed_kernel_module_certificate_sha256": "6f6dd790556186d5c0a8badc91fdaa842ea7387db09ce21528157918517fef13"
+}

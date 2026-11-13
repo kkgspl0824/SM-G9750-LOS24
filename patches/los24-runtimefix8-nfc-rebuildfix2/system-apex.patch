@@ -1,0 +1,15 @@
+diff --git a/apexd/Android.bp b/apexd/Android.bp
+index 17f2311..a87bd40 100644
+--- a/apexd/Android.bp
++++ b/apexd/Android.bp
+@@ -731,8 +731,8 @@ genrule {
+     name: "gen_apexd_test_mount_empty_erofs_image",
+     tools: ["mkfs.erofs"],
+     out: ["empty_erofs.img"],
+-    cmd: "mkdir -p $(genDir)/dummy_root && " +
+-        "$(location mkfs.erofs) -T 0 -U 00000000-0000-0000-0000-000000000000 $(out) $(genDir)/dummy_root",
++    cmd: "mkdir -p $(genDir)/dummy_root && chmod 0755 $(genDir)/dummy_root && " +
++        "$(location mkfs.erofs) --force-uid=65534 --force-gid=65534 -T 0 -U 00000000-0000-0000-0000-000000000000 $(out) $(genDir)/dummy_root",
+ }
+ 
+ prebuilt_etc {

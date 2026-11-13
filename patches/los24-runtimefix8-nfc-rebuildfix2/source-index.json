@@ -1,0 +1,238 @@
+{
+  "baseline": "LOS24 runtimefix8 + ih8sn-test2 + udfps-test1 + nfc-rebuildfix2 2026-11-13",
+  "source_only": true,
+  "projects": {
+    "bootable/deprecated-ota": {
+      "head": "a60893a68b92701ff76b366c44910915c5f1fed4",
+      "patch": "bootable-deprecated-ota.patch",
+      "sha256": "23f0d20eedf1fb0f00b833c3e064b3c5dea21e427344920b98e12b10681ff510"
+    },
+    "bootable/recovery": {
+      "head": "c1ccd0b4a17557f97ed864b96f160674609c1c54",
+      "patch": "bootable-recovery.patch",
+      "sha256": "cdab8d2e78697e6dc77c846febd0387ad99f73ef2e0627806a3f7a7be51f8f85"
+    },
+    "build/make": {
+      "head": "90d006387398ae6899145e6531a304500cfa0f70",
+      "patch": "build-make.patch",
+      "sha256": "3714a6e5f9a23ff280cb73fa82984a9b09d486aed35e6a95014a06a5475ed24a"
+    },
+    "build/soong": {
+      "head": "a528a88bd553d2a449ad9338a3e944b89a164971",
+      "patch": "build-soong.patch",
+      "sha256": "1e5ddae00f4280be3f81e6de2a1dfe8c05c5d476a4abcb0d8bfd1027121253eb"
+    },
+    "device/samsung/beyond2qlte": {
+      "head": "9d9e90df1a11b7ca72f76c6553cc5eb5558c8549",
+      "patch": "device-samsung-beyond2qlte.patch",
+      "sha256": "132cb46f1179e6a884a5eb619895d22491c72cb355693d8fce872136afb8b7e2"
+    },
+    "device/samsung/sm8150-common": {
+      "head": "88dd5e0b565762ec6c132a362771f4013d6f65a5",
+      "patch": "device-samsung-sm8150-common.patch",
+      "sha256": "b9bab2a2686cf568080e377eae28a11925fe6df32b8e1ea75b166ecf93f3ee7f"
+    },
+    "device/samsung_slsi/sepolicy": {
+      "head": "224e135300fbb07ee12968cc57ad053a267e3ce4",
+      "patch": "device-samsung_slsi-sepolicy.patch",
+      "sha256": "ca91a1bcb5ef25224cd80b9c2fd9d4a84e02138686e26229b0659f0ad9425e5b"
+    },
+    "external/XMP-Toolkit-SDK": {
+      "head": "45acb237cd13c19708f963247c732250cd43a4a5",
+      "patch": "external-XMP-Toolkit-SDK.patch",
+      "sha256": "5ce7254ecb0c00306a542adca7936960cb4f168c4733f83adec6226db7bf7753"
+    },
+    "external/google-highway": {
+      "head": "94b90ab8cb9df9b3719a64751ea2fcb62caa3391",
+      "patch": "external-google-highway.patch",
+      "sha256": "53a86482dec2ae1761fe03d16e87820117caa285e2891fe81af7b2c12ad4a03d"
+    },
+    "external/skia": {
+      "head": "508606366e71a3daa933a4e08bc49b84e387ec18",
+      "patch": "external-skia.patch",
+      "sha256": "6cc2031c49b0c0ec218bad47c021f695d5c6d039e6a7e1ce93eb4308684cbc3a"
+    },
+    "frameworks/base": {
+      "head": "1df617a1093e41562fd1f43f27de0cfb4af817e5",
+      "patch": "frameworks-base.patch",
+      "sha256": "9f5536cb09b7051f38b117d4946a860c3325f656d0f9361e28dd6ed39c7ad220"
+    },
+    "hardware/interfaces": {
+      "head": "a0221f11248a924532444fc7de85d41998b9fe1e",
+      "patch": "hardware-interfaces.patch",
+      "sha256": "59427c48125422b31df083f2b0ddde733399fa79625e1b89bc535a8d00fe161d"
+    },
+    "hardware/libhardware_legacy": {
+      "head": "2a073cd42ec822914ed4e680e7b708485d3a172b",
+      "patch": "hardware-libhardware_legacy.patch",
+      "sha256": "214897b0b42c4c57ace0e40f6545b4639f143691ebfe841d497109e6696005b4"
+    },
+    "hardware/samsung": {
+      "head": "3f823f5fdbfbd447c3ba9be6ae6643a33867d4b6",
+      "patch": "hardware-samsung.patch",
+      "sha256": "3da7b0d636b30635e7ca8015de81d503509efd70cbba54c3485e0d590d846b6e"
+    },
+    "kernel/configs": {
+      "head": "200b3987b78fc25015bf826b281f0c3851daf146",
+      "patch": "kernel-configs.patch",
+      "sha256": "719bf448dfb40de8bb935a1c1d3edf03840896abced37096db0d74e0989f54cc"
+    },
+    "kernel/samsung/sm8150-common": {
+      "head": "d1d9579baf3fc993b91d8ee22227fbb50464c8b4",
+      "patch": "kernel-samsung-sm8150-common.patch",
+      "sha256": "a820419fd0cfb239a6e8f8147b2523c4dd59b5f238f2ccfafddb1cf92a9abac3"
+    },
+    "packages/modules/ConfigInfrastructure": {
+      "head": "333bc8067efc529ef4d197fec2f4f2cae1ad2ece",
+      "patch": "packages-modules-ConfigInfrastructure.patch",
+      "sha256": "699f4e006ca3c4dca7921dcba97894ae26873380b44d081db036070e8f1b7782"
+    },
+    "packages/modules/Connectivity": {
+      "head": "7c04d866538e6f689823b769fb5c1e614ca0e295",
+      "patch": "packages-modules-Connectivity.patch",
+      "sha256": "6553ba96d574db8e59f6e654e31c731581f763e5a7adf5f915221c374d5517be"
+    },
+    "packages/modules/Permission": {
+      "head": "cdbbb94284627e3876c1c5a5591c619d3687de7b",
+      "patch": "packages-modules-Permission.patch",
+      "sha256": "4117665d3500844b67cf85e775014bed56d184675285bcfe5b287bda024df99c"
+    },
+    "packages/modules/UprobeStats": {
+      "head": "7cffa93ccbe6c25182cf27a46eeba75f4f9f551f",
+      "patch": "packages-modules-UprobeStats.patch",
+      "sha256": "e567a7cdf7c752f48618450ba84a3462fa58e3634c6d56157d641371c839dd7d"
+    },
+    "packages/modules/vndk": {
+      "head": "bcab18ef7ad195c3452e78b2eaf9bf7e4998c171",
+      "patch": "packages-modules-vndk.patch",
+      "sha256": "a7892844141068585b5d589e25b2cd216971e8be333c1faefd96c074daaae671"
+    },
+    "prebuilts/clang/host/linux-x86-kernel-4.14": {
+      "head": "e104573d8a0245cfa42ba23d6e2e5a79a272cb5f",
+      "patch": "prebuilts-clang-host-linux-x86-kernel-4.14.patch",
+      "sha256": "3aada22bda24a4a565871f338936519eb3112412300ed99dbf0490f4228442e5"
+    },
+    "prebuilts/misc": {
+      "head": "be7c3a630b5dc5eb3260035d77a81b2f322754f8",
+      "patch": "prebuilts-misc.patch",
+      "sha256": "2001ab733f01df9c92425d38b4e9807864b62711637764f940db8dfc1978f4d4"
+    },
+    "system/apex": {
+      "head": "ce2bb9f710183c864040401d859874b5723e44d8",
+      "patch": "system-apex.patch",
+      "sha256": "58cacd4d3f350891b1812bfacebf494e1008f23a8ef97073633015793ed04741"
+    },
+    "system/bpf": {
+      "head": "1787201ef62581ee5532fdb1e5b0cbc3fb137dab",
+      "patch": "system-bpf.patch",
+      "sha256": "6ba883b779b9142abefba4ddf3fdb1ae835ede8ad3b8c73107a9b3f0ffa71cf2"
+    },
+    "system/core": {
+      "head": "65d661b1a536701e8b118be4e9728d7b5ca727c9",
+      "patch": "system-core.patch",
+      "sha256": "c699e3d1f9bb4181e31460e35749c57b72e636c7fffe655a49b15a04bd97974b"
+    },
+    "system/server_configurable_flags": {
+      "head": "5069ba739faebf91ae72096577ae17e13061af72",
+      "patch": "system-server_configurable_flags.patch",
+      "sha256": "1700820523344d2b37b1a4f65e63f700ff654a096a02fc59a6129173443243bf"
+    },
+    "system/vold": {
+      "head": "11d8982f824d52e8122c7aa732207ba66b8f23c8",
+      "patch": "system-vold.patch",
+      "sha256": "a44c6eb473d0f516aaaec30441e512be9d9f5584faf237f5a4a375b796529c33"
+    },
+    "system/zygote": {
+      "head": "c24023080df0bdb5988c1e0c641d494574a97c40",
+      "patch": "system-zygote.patch",
+      "sha256": "906c39d3411b9c7f4443e6b85d81e749ee879c2efc45c2d3e8670453e158142d"
+    },
+    "vendor/lineage": {
+      "head": "64dc805d0cdc77519b80cb93eb3e2d0a0c801a5c",
+      "patch": "vendor-lineage.patch",
+      "sha256": "e420e0ee2f3bcf6e817131c9fe8e5eaa9c4916b45917ee5b4b4dd161051138d4"
+    },
+    "vendor/samsung/sm8150-common": {
+      "head": "84173d93222ff6d415cdfcc811d4ec253def1f04",
+      "patch": "vendor-samsung-sm8150-common.patch",
+      "sha256": "c747314bdceab1a98e95708634107a75ae1f9b7e0ca6de355b39098962ab0640"
+    }
+  },
+  "deleted": [
+    "kernel/samsung/sm8150-common/Documentation/media/uapi/rc/lirc-get-length.rst",
+    "kernel/samsung/sm8150-common/arch/arm/mach-omap2/omap-pm-noop.c",
+    "kernel/samsung/sm8150-common/arch/arm/mach-omap2/omap-pm.h",
+    "kernel/samsung/sm8150-common/arch/powerpc/net/bpf_jit_asm64.S",
+    "kernel/samsung/sm8150-common/drivers/media/rc/ir-lirc-codec.c",
+    "kernel/samsung/sm8150-common/drivers/staging/media/lirc/Kconfig",
+    "kernel/samsung/sm8150-common/drivers/staging/media/lirc/Makefile",
+    "kernel/samsung/sm8150-common/drivers/staging/media/lirc/TODO",
+    "kernel/samsung/sm8150-common/drivers/staging/media/lirc/lirc_zilog.c",
+    "kernel/samsung/sm8150-common/include/linux/platform_data/media/gpio-ir-recv.h",
+    "kernel/samsung/sm8150-common/include/linux/platform_data/media/ir-rx51.h",
+    "kernel/samsung/sm8150-common/include/media/lirc.h",
+    "kernel/samsung/sm8150-common/include/media/lirc_dev.h",
+    "kernel/samsung/sm8150-common/include/trace/events/bpf.h",
+    "kernel/samsung/sm8150-common/kernel/bpf/sockmap.c"
+  ],
+  "excluded_binary_changes": [
+    {
+      "project": "device/samsung/beyond2qlte",
+      "diff": "diff --git a/compat/gapps/payload/product/etc/security/fsverity/gms_fsverity_cert.der b/compat/gapps/payload/product/etc/security/fsverity/gms_fsverity_cert.der"
+    },
+    {
+      "project": "device/samsung/beyond2qlte",
+      "diff": "diff --git a/compat/gapps/payload/product/etc/security/fsverity/play_store_fsi_cert.der b/compat/gapps/payload/product/etc/security/fsverity/play_store_fsi_cert.der"
+    },
+    {
+      "project": "device/samsung/beyond2qlte",
+      "diff": "diff --git a/compat/gapps/payload/product/framework/com.google.android.dialer.support.jar b/compat/gapps/payload/product/framework/com.google.android.dialer.support.jar"
+    },
+    {
+      "project": "device/samsung/beyond2qlte",
+      "diff": "diff --git a/compat/gapps/payload/product/framework/com.google.android.maps.jar b/compat/gapps/payload/product/framework/com.google.android.maps.jar"
+    },
+    {
+      "project": "device/samsung/beyond2qlte",
+      "diff": "diff --git a/compat/gapps/payload/product/lib/libjni_latinimegoogle.so b/compat/gapps/payload/product/lib/libjni_latinimegoogle.so"
+    },
+    {
+      "project": "device/samsung/beyond2qlte",
+      "diff": "diff --git a/compat/gapps/payload/product/lib64/libgdx.so b/compat/gapps/payload/product/lib64/libgdx.so"
+    },
+    {
+      "project": "device/samsung/beyond2qlte",
+      "diff": "diff --git a/compat/gapps/payload/product/lib64/libjni_latinimegoogle.so b/compat/gapps/payload/product/lib64/libjni_latinimegoogle.so"
+    },
+    {
+      "project": "device/samsung/beyond2qlte",
+      "diff": "diff --git a/compat/gapps/payload/product/overlay/GmsCoreOverlay.apk b/compat/gapps/payload/product/overlay/GmsCoreOverlay.apk"
+    },
+    {
+      "project": "device/samsung/beyond2qlte",
+      "diff": "diff --git a/compat/gapps/payload/product/priv-app/GoogleServicesFramework/GoogleServicesFramework.apk b/compat/gapps/payload/product/priv-app/GoogleServicesFramework/GoogleServicesFramework.apk"
+    },
+    {
+      "project": "device/samsung/beyond2qlte",
+      "diff": "diff --git a/compat/gapps/payload/product/priv-app/Phonesky/Phonesky.apk b/compat/gapps/payload/product/priv-app/Phonesky/Phonesky.apk"
+    },
+    {
+      "project": "device/samsung/beyond2qlte",
+      "diff": "diff --git a/compat/gapps/payload/product/priv-app/PrebuiltGmsCoreVic/PrebuiltGmsCoreVic.apk b/compat/gapps/payload/product/priv-app/PrebuiltGmsCoreVic/PrebuiltGmsCoreVic.apk"
+    },
+    {
+      "project": "device/samsung/beyond2qlte",
+      "diff": "diff --git a/compat/ih8sn-test1/ih8sn b/compat/ih8sn-test1/ih8sn"
+    },
+    {
+      "project": "vendor/samsung/sm8150-common",
+      "diff": "diff --git a/proprietary/lib/libantradio.so b/proprietary/lib/libantradio.so"
+    },
+    {
+      "project": "vendor/samsung/sm8150-common",
+      "diff": "diff --git a/proprietary/lib64/libantradio.so b/proprietary/lib64/libantradio.so"
+    }
+  ],
+  "reference_ROM_sha256": "530016d7eaae9b83cac2565c1cc3341d6b685c8744de5e9d86bcba552e312e68",
+  "external_inputs": "Complete runtimefix8-nfc-rebuildfix2 rebuild kit required for binaries, vendor inputs and full reproduction."
+}

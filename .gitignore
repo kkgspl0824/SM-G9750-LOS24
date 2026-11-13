@@ -13,6 +13,7 @@
 /patches/*
 !/patches/los24-runtimefix8/
 !/patches/los24-runtimefix8-nfc/
+!/patches/los24-runtimefix8-nfc-rebuildfix2/
 
 !/source/
 
@@ -25,6 +26,9 @@
 !/rebuild/SM-G9750-LOS24-runtimefix8-nfc-20261111/
 /rebuild/SM-G9750-LOS24-runtimefix8-nfc-20261111/*
 !/rebuild/SM-G9750-LOS24-runtimefix8-nfc-20261111/tools/
+!/rebuild/SM-G9750-LOS24-runtimefix8-nfc-rebuildfix2-20261113/
+/rebuild/SM-G9750-LOS24-runtimefix8-nfc-rebuildfix2-20261113/*
+!/rebuild/SM-G9750-LOS24-runtimefix8-nfc-rebuildfix2-20261113/tools/
 
 # 即使出现在开放的源码目录中，也不纳入生成物、载荷和凭据。
 **/out/

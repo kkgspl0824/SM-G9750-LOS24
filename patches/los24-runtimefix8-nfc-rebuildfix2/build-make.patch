@@ -1,0 +1,118 @@
+diff --git a/core/Makefile b/core/Makefile
+index 65c45cb..672fd12 100644
+--- a/core/Makefile
++++ b/core/Makefile
+@@ -6576,6 +6576,10 @@ ifdef BUILDING_SYSTEM_OTHER_IMAGE
+   endif
+ endif
+ 
++ifdef BUILDING_RAMDISK_IMAGE
++  $(BUILT_TARGET_FILES_DIR): $(RAMDISK_NODE_LIST)
++endif
++
+ ifdef BUILDING_VENDOR_BOOT_IMAGE
+   $(BUILT_TARGET_FILES_DIR): $(INTERNAL_VENDOR_RAMDISK_FILES)
+   $(BUILT_TARGET_FILES_DIR): $(INTERNAL_VENDOR_RAMDISK_FRAGMENT_TARGETS)
+@@ -6618,6 +6622,7 @@ ifdef BUILDING_VENDOR_IMAGE
+   endif
+ else ifdef BOARD_PREBUILT_VENDORIMAGE
+   $(BUILT_TARGET_FILES_DIR): $(INSTALLED_VENDORIMAGE_TARGET)
++  $(BUILT_TARGET_FILES_DIR): $(wildcard $(BOARD_PREBUILT_VENDORIMAGE).target-files.zip)
+ endif
+ 
+ ifdef BUILDING_PRODUCT_IMAGE
+@@ -7010,6 +7015,13 @@ ifneq ($(PRODUCT_SYSTEM_DLKM_BASE_FS_PATH),)
+ 	$(hide) cp $(PRODUCT_SYSTEM_DLKM_BASE_FS_PATH) \
+ 	  $(zip_root)/META/$(notdir $(PRODUCT_SYSTEM_DLKM_BASE_FS_PATH))
+ endif
++# A companion tree must exist before generating non-A/B recovery resources.
++ifdef BOARD_PREBUILT_VENDORIMAGE
++ifneq ($(wildcard $(BOARD_PREBUILT_VENDORIMAGE).target-files.zip),)
++	$(hide) unzip -qoDD $(BOARD_PREBUILT_VENDORIMAGE).target-files.zip 'VENDOR/*' -d $(zip_root)
++endif
++endif
++# End prebuilt vendor tree preparation.
+ ifeq ($(TARGET_OTA_ALLOW_NON_AB),true)
+ ifneq ($(INSTALLED_RECOVERYIMAGE_TARGET),)
+ 	$(hide) PATH=$(INTERNAL_USERIMAGES_BINARY_PATHS):$$PATH MKBOOTIMG=$(MKBOOTIMG) \
+@@ -7044,6 +7056,10 @@ endif
+ ifdef BOARD_PREBUILT_VENDORIMAGE
+ 	$(hide) mkdir -p $(zip_root)/IMAGES
+ 	$(hide) cp $(INSTALLED_VENDORIMAGE_TARGET) $(zip_root)/IMAGES/
++# A non-A/B prebuilt also needs its real file tree, ownership and block map.
++ifneq ($(wildcard $(BOARD_PREBUILT_VENDORIMAGE).target-files.zip),)
++	$(hide) unzip -qoDD $(BOARD_PREBUILT_VENDORIMAGE).target-files.zip 'IMAGES/vendor.map' 'META/vendor_filesystem_config.txt' -d $(zip_root)
++endif
+ endif
+ ifdef BOARD_PREBUILT_PRODUCTIMAGE
+ 	$(hide) mkdir -p $(zip_root)/IMAGES
+@@ -7165,13 +7181,15 @@ endif
+ ifdef BUILDING_SYSTEM_DLKM_IMAGE
+ 	$(hide) $(call copy-image-and-generate-map,$(BUILT_SYSTEM_DLKMIMAGE_TARGET),$(zip_root)/IMAGES,system_dlkm)
+ 	$(hide) $(call fs_config,$(zip_root)/SYSTEM_DLKM,system_dlkm/) > $(zip_root)/META/system_dlkm_filesystem_config.txt
++endif
++ifdef BUILDING_RAMDISK_IMAGE
++	$(hide) cp $(RAMDISK_NODE_LIST) $(zip_root)/META/ramdisk_node_list
+ endif
+ 	@# BOOT/RAMDISK contains the first stage and recovery ramdisk.
+ 	$(hide) $(call fs_config,$(zip_root)/BOOT/RAMDISK,) > $(zip_root)/META/boot_filesystem_config.txt
+ ifdef BUILDING_INIT_BOOT_IMAGE
+ 	$(hide) $(call package_files-copy-root, $(TARGET_RAMDISK_OUT),$(zip_root)/INIT_BOOT/RAMDISK)
+ 	$(hide) $(call fs_config,$(zip_root)/INIT_BOOT/RAMDISK,) > $(zip_root)/META/init_boot_filesystem_config.txt
+-	$(hide) cp $(RAMDISK_NODE_LIST) $(zip_root)/META/ramdisk_node_list
+ ifdef BOARD_KERNEL_PAGESIZE
+ 	$(hide) echo "$(BOARD_KERNEL_PAGESIZE)" > $(zip_root)/INIT_BOOT/pagesize
+ endif # BOARD_KERNEL_PAGESIZE
+diff --git a/tools/releasetools/common.py b/tools/releasetools/common.py
+index fef646f..0f3aa12 100644
+--- a/tools/releasetools/common.py
++++ b/tools/releasetools/common.py
+@@ -1717,12 +1717,13 @@ def _MakeRamdisk(sourcedir, fs_config_file=None,
+ 
+   cmd = ["mkbootfs"]
+ 
+-  if fs_config_file and os.access(fs_config_file, os.F_OK):
+-    cmd.extend(["-f", fs_config_file])
+-
++  # mkbootfs emits nodes while parsing -n; match native Make before loading fs_config.
+   if dev_node_file and os.access(dev_node_file, os.F_OK):
+     cmd.extend(["-n", dev_node_file])
+ 
++  if fs_config_file and os.access(fs_config_file, os.F_OK):
++    cmd.extend(["-f", fs_config_file])
++
+   cmd.append(os.path.join(sourcedir, "RAMDISK"))
+ 
+   p1 = Run(cmd, stdout=subprocess.PIPE)
+@@ -1992,6 +1993,9 @@ def GetBootableImage(name, prebuilt_name, unpack_dir, tree_subdir,
+   logger.info("building image from target_files %s...", tree_subdir)
+ 
+   has_ramdisk = HasRamdisk(partition_name, info_dict)
++  # Legacy BOOT carries the generic ramdisk and needs the same nodes as native Make.
++  dev_nodes = dev_nodes or (partition_name == "boot" and has_ramdisk
++                            and info_dict.get("recovery_as_boot") != "true")
+ 
+   fs_config = "META/" + tree_subdir.lower() + "_filesystem_config.txt"
+   data = _BuildBootableImage(prebuilt_name, os.path.join(unpack_dir, tree_subdir),
+diff --git a/tools/releasetools/ota_utils.py b/tools/releasetools/ota_utils.py
+index d94c5c3..434e86e 100644
+--- a/tools/releasetools/ota_utils.py
++++ b/tools/releasetools/ota_utils.py
+@@ -37,6 +37,7 @@ OPTIONS.no_signing = False
+ OPTIONS.force_non_ab = False
+ OPTIONS.wipe_user_data = False
+ OPTIONS.downgrade = False
++OPTIONS.spl_downgrade = False
+ OPTIONS.key_passwords = {}
+ OPTIONS.incremental_source = None
+ OPTIONS.retrofit_dynamic_partitions = False
+@@ -300,6 +301,9 @@ def GetPackageMetadata(target_info, source_info=None):
+   if OPTIONS.wipe_user_data:
+     metadata_proto.wipe = True
+ 
++  if OPTIONS.spl_downgrade:
++    metadata_proto.spl_downgrade = True
++
+   if OPTIONS.retrofit_dynamic_partitions:
+     metadata_proto.retrofit_dynamic_partitions = True
+ 
