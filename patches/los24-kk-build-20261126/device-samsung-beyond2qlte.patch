@@ -1,0 +1,66 @@
+diff --git a/audio/audio_policy_configuration.xml b/audio/audio_policy_configuration.xml
+index db119c8417e556955cd78106d66547a33b1e8f3a..2a973fac23c052227a33eb43be9bf321efe256f0 100644
+--- a/audio/audio_policy_configuration.xml
++++ b/audio/audio_policy_configuration.xml
+@@ -137,8 +137,49 @@
+ 
+         </module>
+ 
+-        <!-- A2dp Audio HAL -->
+-        <xi:include href="a2dp_audio_policy_configuration.xml"/>
++        <!-- Software Bluetooth audio HAL. -->
++        <module name="bluetooth" halVersion="2.0">
++            <mixPorts>
++                <mixPort name="a2dp output" role="source"/>
++                <mixPort name="a2dp input" role="sink">
++                    <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
++                             samplingRates="44100,48000"
++                             channelMasks="AUDIO_CHANNEL_IN_MONO,AUDIO_CHANNEL_IN_STEREO"/>
++                </mixPort>
++            </mixPorts>
++            <devicePorts>
++                <devicePort tagName="BT A2DP Out" type="AUDIO_DEVICE_OUT_BLUETOOTH_A2DP" role="sink">
++                    <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
++                             samplingRates="44100"
++                             channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
++                </devicePort>
++                <devicePort tagName="BT A2DP Headphones" type="AUDIO_DEVICE_OUT_BLUETOOTH_A2DP_HEADPHONES" role="sink">
++                    <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
++                             samplingRates="44100"
++                             channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
++                </devicePort>
++                <devicePort tagName="BT A2DP Speaker" type="AUDIO_DEVICE_OUT_BLUETOOTH_A2DP_SPEAKER" role="sink">
++                    <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
++                             samplingRates="44100"
++                             channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
++                </devicePort>
++                <devicePort tagName="BT A2DP In" type="AUDIO_DEVICE_IN_BLUETOOTH_A2DP" role="source">
++                    <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
++                             samplingRates="44100,48000"
++                             channelMasks="AUDIO_CHANNEL_IN_MONO,AUDIO_CHANNEL_IN_STEREO"/>
++                </devicePort>
++            </devicePorts>
++            <routes>
++                <route type="mix" sink="BT A2DP Out"
++                       sources="a2dp output"/>
++                <route type="mix" sink="BT A2DP Headphones"
++                       sources="a2dp output"/>
++                <route type="mix" sink="BT A2DP Speaker"
++                       sources="a2dp output"/>
++                <route type="mix" sink="a2dp input"
++                       sources="BT A2DP In"/>
++            </routes>
++        </module>
+ 
+         <!-- Usb Audio HAL -->
+         <module name="usb" halVersion="2.0">
+diff --git a/rootdir/etc/ueventd.vendor-import.rc b/rootdir/etc/ueventd.vendor-import.rc
+index 0dc9c4e1be8e5c74fbb5a5e490d5ce5468ffbd88..0943473e414b1db16daeef012a0d60a9d1e3421c 100644
+--- a/rootdir/etc/ueventd.vendor-import.rc
++++ b/rootdir/etc/ueventd.vendor-import.rc
+@@ -1,2 +1,5 @@
+ # HXE1 keeps its device permissions at the legacy vendor-root path.
+ import /vendor/ueventd.rc
++
++# The camera provider opens the rear torch control with O_RDWR.
++/sys/devices/virtual/camera/flash rear_flash 0600 cameraserver camera

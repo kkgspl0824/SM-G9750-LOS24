@@ -6,7 +6,9 @@
 
 | 位置 | 内容 |
 | --- | --- |
-| [manifests](manifests/lineage24-runtimefix8-nfc-pinned.xml) | 1249个源码项目的固定提交清单。 |
+| [kk-build 固定清单](manifests/lineage24-kk-build-20261126-pinned.xml) | 2026-11-26 完整 OTA 使用的 1,250 个源码项目提交。 |
+| [kk-build 增量补丁](patches/los24-kk-build-20261126) | 快捷手电筒、蓝牙媒体、cgroup v2 和 Binder 冻结、内核版本后缀及 vendor 封包更新。 |
+| [NFC 修订版固定清单](manifests/lineage24-runtimefix8-nfc-pinned.xml) | 旧版 1,249 个源码项目的固定提交。 |
 | [patches/los24-runtimefix8-nfc-rebuildfix2](patches/los24-runtimefix8-nfc-rebuildfix2) | 31个项目的完整文本补丁，涵盖设备树、内核、系统框架、HAL、SELinux策略和构建系统；source-index记录删除项及外部二进制变更。 |
 | [source/nfc-rebuildfix2](source/nfc-rebuildfix2) | 最新11项重建修复的完整源码覆盖，包括设备配置、内核Makefile、WiFi驱动和Soong处理脚本。 |
 | [source/nfc-test1](source/nfc-test1) | NFC标签、指纹显示资源和ih8sn产品接入的源码覆盖。 |
@@ -25,3 +27,5 @@
 - **GApps与ih8sn整合**：保留Google服务的产品接入、兼容配置，以及ih8sn组件和开机触发保护。
 - **构建可重复性**：固定内核C/汇编路径映射、WiFi编译时钟和模块签名输入，规范化ELF/BTF、PNG与空EROFS镜像的生成元数据。
 - **镜像与OTA封装**：统一vendor中的Recovery资源和安装脚本引用，提供运行文件/镜像严格比较、AVB/VINTF、OTA签名及完整数据重建校验。
+- **快捷手电筒与蓝牙媒体**：补齐后置手电筒节点访问权限、A2DP 路由和 HIDL 音频服务声明。2026-11-26 版通过手机系统更新器本地安装，蓝牙耳机播放有声。
+- **应用冻结**：为 4.14 内核补充 cgroup v2 freezer 和 Binder 冻结接口。已在前一版实测 TikTok 锁屏后自动冻结，2026-11-26 版内核版本为 `4.14.190-kk-build`。

@@ -1,0 +1,15 @@
+diff --git a/arch/arm64/configs/lineage_sm_g9750_defconfig b/arch/arm64/configs/lineage_sm_g9750_defconfig
+index a18f9edacf7523903ca2704717361c5b0330ac04..f3d25120276bcb72714d62fbe7a5170d01bd0ace 100644
+--- a/arch/arm64/configs/lineage_sm_g9750_defconfig
++++ b/arch/arm64/configs/lineage_sm_g9750_defconfig
+@@ -48,8 +48,8 @@ CONFIG_THREAD_INFO_IN_TASK=y
+ CONFIG_INIT_ENV_ARG_LIMIT=32
+ CONFIG_CROSS_COMPILE=""
+ # CONFIG_COMPILE_TEST is not set
+-CONFIG_LOCALVERSION="-a16-bpf54"
+-CONFIG_LOCALVERSION_AUTO=y
++CONFIG_LOCALVERSION="-kk-build"
++# CONFIG_LOCALVERSION_AUTO is not set
+ CONFIG_DEFAULT_HOSTNAME="(none)"
+ CONFIG_SWAP=y
+ # CONFIG_SYSVIPC is not set

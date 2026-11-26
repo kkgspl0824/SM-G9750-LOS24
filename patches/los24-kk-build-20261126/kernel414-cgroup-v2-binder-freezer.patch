@@ -1,0 +1,2283 @@
+diff --git a/drivers/android/binder.c b/drivers/android/binder.c
+index f224d95f4755d1c713f6b4000ddf8f705f256bb7..05cb51028a77557c5339ee1c3eff6f50b34e0e3a 100755
+--- a/drivers/android/binder.c
++++ b/drivers/android/binder.c
+@@ -90,6 +90,7 @@ static DEFINE_MUTEX(binder_deferred_lock);
+ static HLIST_HEAD(binder_devices);
+ static HLIST_HEAD(binder_procs);
+ static DEFINE_MUTEX(binder_procs_lock);
++static DEFINE_MUTEX(binder_freeze_lock);
+ 
+ static HLIST_HEAD(binder_dead_nodes);
+ static DEFINE_SPINLOCK(binder_dead_nodes_lock);
+@@ -188,7 +189,7 @@ enum binder_stat_types {
+ };
+ 
+ struct binder_stats {
+-	atomic_t br[_IOC_NR(BR_FAILED_REPLY) + 1];
++	atomic_t br[_IOC_NR(BR_FROZEN_REPLY) + 1];
+ 	atomic_t bc[_IOC_NR(BC_REPLY_SG) + 1];
+ 	atomic_t obj_created[BINDER_STAT_COUNT];
+ 	atomic_t obj_deleted[BINDER_STAT_COUNT];
+@@ -467,9 +468,21 @@ struct binder_priority {
+  *                        (protected by binder_deferred_lock)
+  * @deferred_work:        bitmap of deferred work to perform
+  *                        (protected by binder_deferred_lock)
++ * @outstanding_txns:     number of transactions to be transmitted before
++ *                        processes in freeze_wait are woken up
++ *                        (protected by @inner_lock)
+  * @is_dead:              process is dead and awaiting free
+  *                        when outstanding transactions are cleaned up
+  *                        (protected by @inner_lock)
++ * @sync_recv:            process received sync transactions since last frozen
++ *                        bit 0: received sync transaction after being frozen
++ *                        bit 1: new pending sync transaction during freezing
++ *                        (protected by @inner_lock)
++ * @async_recv:           process received async transactions since last frozen
++ *                        (protected by @inner_lock)
++ * @freeze_wait:          waitqueue of processes waiting for all outstanding
++ *                        transactions to be processed
++ *                        (protected by @inner_lock)
+  * @todo:                 list of work for this process
+  *                        (protected by @inner_lock)
+  * @stats:                per-process binder statistics
+@@ -513,7 +526,12 @@ struct binder_proc {
+ 	struct mutex files_lock;
+ 	struct hlist_node deferred_work_node;
+ 	int deferred_work;
++	int outstanding_txns;
+ 	bool is_dead;
++	bool is_frozen;
++	bool sync_recv;
++	bool async_recv;
++	wait_queue_head_t freeze_wait;
+ 
+ 	struct list_head todo;
+ 	struct binder_stats stats;
+@@ -2086,6 +2104,10 @@ static void binder_free_transaction(struct binder_transaction *t)
+ 		spin_unlock(&t->lock);
+ 
+ 		binder_inner_proc_lock(target_proc);
++		target_proc->outstanding_txns--;
++		BUG_ON(target_proc->outstanding_txns < 0);
++		if (!target_proc->outstanding_txns && target_proc->is_frozen)
++			wake_up_interruptible_all(&target_proc->freeze_wait);
+ 		if (t->buffer)
+ 			t->buffer->transaction = NULL;
+ 		binder_inner_proc_unlock(target_proc);
+@@ -2881,10 +2903,11 @@ static int binder_fixup_parent(struct binder_transaction *t,
+  * If the @thread parameter is not NULL, the transaction is always queued
+  * to the waitlist of that specific thread.
+  *
+- * Return:	true if the transactions was successfully queued
+- *		false if the target process or thread is dead
++ * Return:	0 if the transaction was successfully queued
++ *		BR_DEAD_REPLY if the target process or thread is dead
++ *		BR_FROZEN_REPLY if the target process or thread is frozen
+  */
+-static bool binder_proc_transaction(struct binder_transaction *t,
++static int binder_proc_transaction(struct binder_transaction *t,
+ 				    struct binder_proc *proc,
+ 				    struct binder_thread *thread)
+ {
+@@ -2908,11 +2931,18 @@ static bool binder_proc_transaction(struct binder_transaction *t,
+ 	}
+ 
+ 	binder_inner_proc_lock(proc);
++	if (proc->is_frozen) {
++		proc->sync_recv |= !oneway;
++		proc->async_recv |= oneway;
++	}
+ 
+-	if (proc->is_dead || (thread && thread->is_dead)) {
++	if ((proc->is_frozen && !oneway) || proc->is_dead ||
++			(thread && thread->is_dead)) {
++		bool proc_is_dead = proc->is_dead
++			|| (thread && thread->is_dead);
+ 		binder_inner_proc_unlock(proc);
+ 		binder_node_unlock(node);
+-		return false;
++		return proc_is_dead ? BR_DEAD_REPLY : BR_FROZEN_REPLY;
+ 	}
+ 
+ 	if (!thread && !pending_async)
+@@ -2931,10 +2961,11 @@ static bool binder_proc_transaction(struct binder_transaction *t,
+ 	if (!pending_async)
+ 		binder_wakeup_thread_ilocked(proc, thread, !oneway /* sync */);
+ 
++	proc->outstanding_txns++;
+ 	binder_inner_proc_unlock(proc);
+ 	binder_node_unlock(node);
+ 
+-	return true;
++	return 0;
+ }
+ 
+ /**
+@@ -3613,12 +3644,14 @@ static void binder_transaction(struct binder_proc *proc,
+ 		binder_enqueue_thread_work(thread, tcomplete);
+ 		binder_inner_proc_lock(target_proc);
+ 		if (target_thread->is_dead) {
++			return_error = BR_DEAD_REPLY;
+ 			binder_inner_proc_unlock(target_proc);
+ 			goto err_dead_proc_or_thread;
+ 		}
+ 		BUG_ON(t->buffer->async_transaction != 0);
+ 		binder_pop_transaction_ilocked(target_thread, in_reply_to);
+ 		binder_enqueue_thread_work_ilocked(target_thread, &t->work);
++		target_proc->outstanding_txns++;
+ 		binder_inner_proc_unlock(target_proc);
+ 		wake_up_interruptible_sync(&target_thread->wait);
+ 		binder_restore_priority(current, in_reply_to->saved_priority);
+@@ -3638,7 +3671,9 @@ static void binder_transaction(struct binder_proc *proc,
+ 		t->from_parent = thread->transaction_stack;
+ 		thread->transaction_stack = t;
+ 		binder_inner_proc_unlock(proc);
+-		if (!binder_proc_transaction(t, target_proc, target_thread)) {
++		return_error = binder_proc_transaction(t,
++				target_proc, target_thread);
++		if (return_error) {
+ 			binder_inner_proc_lock(proc);
+ 			binder_pop_transaction_ilocked(thread, t);
+ 			binder_inner_proc_unlock(proc);
+@@ -3648,7 +3683,8 @@ static void binder_transaction(struct binder_proc *proc,
+ 		BUG_ON(target_node == NULL);
+ 		BUG_ON(t->buffer->async_transaction != 1);
+ 		binder_enqueue_thread_work(thread, tcomplete);
+-		if (!binder_proc_transaction(t, target_proc, NULL))
++		return_error = binder_proc_transaction(t, target_proc, NULL);
++		if (return_error)
+ 			goto err_dead_proc_or_thread;
+ 	}
+ 	if (target_thread)
+@@ -3665,7 +3701,6 @@ static void binder_transaction(struct binder_proc *proc,
+ 	return;
+ 
+ err_dead_proc_or_thread:
+-	return_error = BR_DEAD_REPLY;
+ 	return_error_line = __LINE__;
+ 	binder_dequeue_work(proc, tcomplete);
+ err_translate_failed:
+@@ -4772,6 +4807,7 @@ static void binder_free_proc(struct binder_proc *proc)
+ 
+ 	BUG_ON(!list_empty(&proc->todo));
+ 	BUG_ON(!list_empty(&proc->delivered_death));
++	WARN_ON(proc->outstanding_txns);
+ 	device = container_of(proc->context, struct binder_device, context);
+ 	if (refcount_dec_and_test(&device->ref)) {
+ 		kfree(proc->context->name);
+@@ -4832,6 +4868,7 @@ static int binder_thread_release(struct binder_proc *proc,
+ 			     (t->to_thread == thread) ? "in" : "out");
+ 
+ 		if (t->to_thread == thread) {
++			t->to_proc->outstanding_txns--;
+ 			t->to_proc = NULL;
+ 			t->to_thread = NULL;
+ 			if (t->buffer) {
+@@ -5078,6 +5115,166 @@ static int binder_ioctl_get_node_debug_info(struct binder_proc *proc,
+ 	return 0;
+ }
+ 
++static bool binder_txns_pending_ilocked(struct binder_proc *proc)
++{
++	struct rb_node *n;
++	struct binder_thread *thread;
++
++	if (proc->outstanding_txns > 0)
++		return true;
++
++	for (n = rb_first(&proc->threads); n; n = rb_next(n)) {
++		thread = rb_entry(n, struct binder_thread, rb_node);
++		if (thread->transaction_stack)
++			return true;
++	}
++	return false;
++}
++
++static void binder_thaw_proc(struct binder_proc *proc)
++{
++	binder_inner_proc_lock(proc);
++	proc->sync_recv = false;
++	proc->async_recv = false;
++	proc->is_frozen = false;
++	binder_inner_proc_unlock(proc);
++}
++
++static int binder_freeze_proc(struct binder_proc *proc, u32 timeout_ms,
++			      bool *newly_frozen)
++{
++	int ret = 0;
++
++	binder_inner_proc_lock(proc);
++	if (proc->is_frozen) {
++		binder_inner_proc_unlock(proc);
++		return 0;
++	}
++
++	proc->sync_recv = false;
++	proc->async_recv = false;
++	proc->is_frozen = true;
++	binder_inner_proc_unlock(proc);
++
++	if (timeout_ms > 0)
++		ret = wait_event_interruptible_timeout(
++			proc->freeze_wait, !READ_ONCE(proc->outstanding_txns),
++			msecs_to_jiffies(timeout_ms));
++
++	/* A thread may still be waiting for a reply. */
++	if (ret >= 0) {
++		binder_inner_proc_lock(proc);
++		ret = binder_txns_pending_ilocked(proc) ? -EAGAIN : 0;
++		binder_inner_proc_unlock(proc);
++	}
++
++	if (ret < 0)
++		binder_thaw_proc(proc);
++	else
++		*newly_frozen = true;
++
++	return ret;
++}
++
++static int binder_ioctl_freeze(const struct binder_freeze_info *info)
++{
++	struct binder_freeze_target {
++		struct binder_proc *proc;
++		bool newly_frozen;
++	} *targets;
++	struct binder_proc *proc;
++	int count = 0, i = 0, ret = 0;
++
++	mutex_lock(&binder_freeze_lock);
++	mutex_lock(&binder_procs_lock);
++	hlist_for_each_entry(proc, &binder_procs, proc_node) {
++		if (proc->pid == info->pid)
++			count++;
++	}
++
++	if (!count) {
++		ret = -EINVAL;
++		goto unlock_procs;
++	}
++
++	targets = kcalloc(count, sizeof(*targets), GFP_KERNEL);
++	if (!targets) {
++		ret = -ENOMEM;
++		goto unlock_procs;
++	}
++
++	hlist_for_each_entry(proc, &binder_procs, proc_node) {
++		if (proc->pid != info->pid)
++			continue;
++
++		binder_inner_proc_lock(proc);
++		atomic_inc(&proc->tmp_ref);
++		binder_inner_proc_unlock(proc);
++		targets[i++].proc = proc;
++	}
++	mutex_unlock(&binder_procs_lock);
++
++	for (i = 0; i < count; i++) {
++		if (!info->enable) {
++			binder_thaw_proc(targets[i].proc);
++			continue;
++		}
++
++		ret = binder_freeze_proc(targets[i].proc, info->timeout_ms,
++					 &targets[i].newly_frozen);
++		if (ret)
++			break;
++	}
++
++	/* Keep every target alive until any partial freeze has been rolled back. */
++	while (ret && i > 0) {
++		i--;
++		if (targets[i].newly_frozen)
++			binder_thaw_proc(targets[i].proc);
++	}
++
++	for (i = 0; i < count; i++)
++		binder_proc_dec_tmpref(targets[i].proc);
++	kfree(targets);
++	mutex_unlock(&binder_freeze_lock);
++	return ret;
++
++unlock_procs:
++	mutex_unlock(&binder_procs_lock);
++	mutex_unlock(&binder_freeze_lock);
++	return ret;
++}
++
++static int binder_ioctl_get_freezer_info(
++				struct binder_frozen_status_info *info)
++{
++	struct binder_proc *target_proc;
++	bool found = false;
++	__u32 txns_pending;
++
++	info->sync_recv = 0;
++	info->async_recv = 0;
++
++	mutex_lock(&binder_procs_lock);
++	hlist_for_each_entry(target_proc, &binder_procs, proc_node) {
++		if (target_proc->pid == info->pid) {
++			found = true;
++			binder_inner_proc_lock(target_proc);
++			txns_pending = binder_txns_pending_ilocked(target_proc);
++			info->sync_recv |= target_proc->sync_recv |
++					(txns_pending << 1);
++			info->async_recv |= target_proc->async_recv;
++			binder_inner_proc_unlock(target_proc);
++		}
++	}
++	mutex_unlock(&binder_procs_lock);
++
++	if (!found)
++		return -EINVAL;
++
++	return 0;
++}
++
+ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ {
+ 	int ret;
+@@ -5103,6 +5300,14 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ 		goto err;
+ 	}
+ 
++	/* Only Android's system server uses the freezer on framework Binder. */
++	if ((cmd == BINDER_FREEZE || cmd == BINDER_GET_FROZEN_INFO) &&
++	    (!uid_eq(current_euid(), KUIDT_INIT(1000)) ||
++	     strcmp(proc->context->name, "binder"))) {
++		ret = -EPERM;
++		goto err;
++	}
++
+ 	switch (cmd) {
+ 	case BINDER_WRITE_READ:
+ 		ret = binder_ioctl_write_read(filp, cmd, arg, thread);
+@@ -5204,6 +5409,37 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ 		}
+ 		break;
+ 	}
++	case BINDER_FREEZE: {
++		struct binder_freeze_info info;
++
++		if (copy_from_user(&info, ubuf, sizeof(info))) {
++			ret = -EFAULT;
++			goto err;
++		}
++
++		ret = binder_ioctl_freeze(&info);
++		if (ret < 0)
++			goto err;
++		break;
++	}
++	case BINDER_GET_FROZEN_INFO: {
++		struct binder_frozen_status_info info;
++
++		if (copy_from_user(&info, ubuf, sizeof(info))) {
++			ret = -EFAULT;
++			goto err;
++		}
++
++		ret = binder_ioctl_get_freezer_info(&info);
++		if (ret < 0)
++			goto err;
++
++		if (copy_to_user(ubuf, &info, sizeof(info))) {
++			ret = -EFAULT;
++			goto err;
++		}
++		break;
++	}
+ 	default:
+ 		ret = -EINVAL;
+ 		goto err;
+@@ -5318,6 +5554,7 @@ static int binder_open(struct inode *nodp, struct file *filp)
+ 	proc->tsk = current->group_leader;
+ 	mutex_init(&proc->files_lock);
+ 	INIT_LIST_HEAD(&proc->todo);
++	init_waitqueue_head(&proc->freeze_wait);
+ 	if (binder_supported_policy(current->policy)) {
+ 		proc->default_priority.sched_policy = current->policy;
+ 		proc->default_priority.prio = current->normal_prio;
+@@ -5539,6 +5776,9 @@ static void binder_deferred_release(struct binder_proc *proc)
+ 	atomic_inc(&proc->tmp_ref);
+ 
+ 	proc->is_dead = true;
++	proc->is_frozen = false;
++	proc->sync_recv = false;
++	proc->async_recv = false;
+ 	threads = 0;
+ 	active_transactions = 0;
+ 	while ((n = rb_first(&proc->threads))) {
+@@ -5992,7 +6232,8 @@ static const char * const binder_return_strings[] = {
+ 	"BR_FINISHED",
+ 	"BR_DEAD_BINDER",
+ 	"BR_CLEAR_DEATH_NOTIFICATION_DONE",
+-	"BR_FAILED_REPLY"
++	"BR_FAILED_REPLY",
++	"BR_FROZEN_REPLY",
+ };
+ 
+ static const char * const binder_command_strings[] = {
+diff --git a/include/linux/cgroup-defs.h b/include/linux/cgroup-defs.h
+index 2604f8750f54661133a620d310ef7bef4f17d2c6..7899aa5f8269e31ea32fd97c4875eb4e1a71a778 100755
+--- a/include/linux/cgroup-defs.h
++++ b/include/linux/cgroup-defs.h
+@@ -64,6 +64,12 @@ enum {
+ 	 * specified at mount time and thus is implemented here.
+ 	 */
+ 	CGRP_CPUSET_CLONE_CHILDREN,
++
++	/* Control group has to be frozen. */
++	CGRP_FREEZE,
++
++	/* Cgroup is frozen. */
++	CGRP_FROZEN,
+ };
+ 
+ /* cgroup_root->flags */
+@@ -258,6 +264,25 @@ struct css_set {
+ 	struct rcu_head rcu_head;
+ };
+ 
++struct cgroup_freezer_state {
++	/* Should the cgroup and its descendants be frozen. */
++	bool freeze;
++
++	/* Should the cgroup actually be frozen? */
++	int e_freeze;
++
++	/* Fields below are protected by css_set_lock */
++
++	/* Number of frozen descendant cgroups */
++	int nr_frozen_descendants;
++
++	/*
++	 * Number of tasks, which are counted as frozen:
++	 * frozen, SIGSTOPped, and PTRACEd.
++	 */
++	int nr_frozen_tasks;
++};
++
+ struct cgroup {
+ 	/* self css with NULL ->ss, points back to this cgroup */
+ 	struct cgroup_subsys_state self;
+@@ -382,6 +407,9 @@ struct cgroup {
+ 	/* used to store eBPF programs */
+ 	struct cgroup_bpf bpf;
+ 
++	/* Used to store internal freezer state */
++	struct cgroup_freezer_state freezer;
++
+ 	/* ids of the ancestors at each level including self */
+ 	int ancestor_ids[];
+ };
+diff --git a/include/linux/cgroup.h b/include/linux/cgroup.h
+index ac32913dde7039a82a6768713b3797dab30530f0..a05344a28710174250af043d59e45178178f88e4 100755
+--- a/include/linux/cgroup.h
++++ b/include/linux/cgroup.h
+@@ -835,6 +835,49 @@ static inline void put_cgroup_ns(struct cgroup_namespace *ns)
+ 		free_cgroup_ns(ns);
+ }
+ 
++#ifdef CONFIG_CGROUPS
++
++void cgroup_enter_frozen(void);
++void cgroup_leave_frozen(bool always_leave);
++void cgroup_update_frozen(struct cgroup *cgrp);
++void cgroup_freeze(struct cgroup *cgrp, bool freeze);
++void cgroup_freezer_migrate_task(struct task_struct *task, struct cgroup *src,
++				 struct cgroup *dst);
++
++static inline bool cgroup_task_freeze(struct task_struct *task)
++{
++	bool ret;
++
++	if (task->flags & PF_KTHREAD)
++		return false;
++
++	rcu_read_lock();
++	ret = test_bit(CGRP_FREEZE, &task_dfl_cgroup(task)->flags);
++	rcu_read_unlock();
++
++	return ret;
++}
++
++static inline bool cgroup_task_frozen(struct task_struct *task)
++{
++	return task->frozen;
++}
++
++#else /* !CONFIG_CGROUPS */
++
++static inline void cgroup_enter_frozen(void) { }
++static inline void cgroup_leave_frozen(bool always_leave) { }
++static inline bool cgroup_task_freeze(struct task_struct *task)
++{
++	return false;
++}
++static inline bool cgroup_task_frozen(struct task_struct *task)
++{
++	return false;
++}
++
++#endif /* !CONFIG_CGROUPS */
++
+ #ifdef CONFIG_CGROUP_BPF
+ static inline void cgroup_bpf_get(struct cgroup *cgrp)
+ {
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index a5a6357a43937aed9550a9fae72f0eddc5420e33..0f420719980c36de450824a5db6456bab3d1eac3 100755
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -896,6 +896,8 @@ struct task_struct {
+ #ifdef CONFIG_CGROUPS
+ 	/* disallow userland-initiated cgroup migration */
+ 	unsigned			no_cgroup_migration:1;
++	/* task is frozen/stopped (used by the cgroup freezer) */
++	unsigned			frozen:1;
+ #endif
+ 
+ 	unsigned long			atomic_flags; /* Flags requiring atomic access. */
+diff --git a/include/linux/sched/jobctl.h b/include/linux/sched/jobctl.h
+index 98228bd48aeea29eb1d456586b58b17ee2aef60a..fa067de9f1a94843f7402f2fd258d8b6339b59f0 100755
+--- a/include/linux/sched/jobctl.h
++++ b/include/linux/sched/jobctl.h
+@@ -18,6 +18,7 @@ struct task_struct;
+ #define JOBCTL_TRAP_NOTIFY_BIT	20	/* trap for NOTIFY */
+ #define JOBCTL_TRAPPING_BIT	21	/* switching to TRACED */
+ #define JOBCTL_LISTENING_BIT	22	/* ptracer is listening for events */
++#define JOBCTL_TRAP_FREEZE_BIT	23	/* trap for cgroup freezer */
+ 
+ #define JOBCTL_STOP_DEQUEUED	(1UL << JOBCTL_STOP_DEQUEUED_BIT)
+ #define JOBCTL_STOP_PENDING	(1UL << JOBCTL_STOP_PENDING_BIT)
+@@ -26,6 +27,7 @@ struct task_struct;
+ #define JOBCTL_TRAP_NOTIFY	(1UL << JOBCTL_TRAP_NOTIFY_BIT)
+ #define JOBCTL_TRAPPING		(1UL << JOBCTL_TRAPPING_BIT)
+ #define JOBCTL_LISTENING	(1UL << JOBCTL_LISTENING_BIT)
++#define JOBCTL_TRAP_FREEZE	(1UL << JOBCTL_TRAP_FREEZE_BIT)
+ 
+ #define JOBCTL_TRAP_MASK	(JOBCTL_TRAP_STOP | JOBCTL_TRAP_NOTIFY)
+ #define JOBCTL_PENDING_MASK	(JOBCTL_STOP_PENDING | JOBCTL_TRAP_MASK)
+diff --git a/include/uapi/linux/android/binder.h b/include/uapi/linux/android/binder.h
+index 6518baa7834ace66e9e4ba8e8aabf831836794f8..c217a43ab771b35857b93428ae9eeb88de098ef0 100755
+--- a/include/uapi/linux/android/binder.h
++++ b/include/uapi/linux/android/binder.h
+@@ -266,6 +266,25 @@ struct binder_node_info_for_ref {
+ 	__u32            reserved3;
+ };
+ 
++struct binder_freeze_info {
++	__u32            pid;
++	__u32            enable;
++	__u32            timeout_ms;
++};
++
++struct binder_frozen_status_info {
++	__u32            pid;
++
++	/* process received sync transactions since last frozen
++	 * bit 0: received sync transaction after being frozen
++	 * bit 1: new pending sync transaction during freezing
++	 */
++	__u32            sync_recv;
++
++	/* process received async transactions since last frozen */
++	__u32            async_recv;
++};
++
+ #define BINDER_WRITE_READ		_IOWR('b', 1, struct binder_write_read)
+ #define BINDER_SET_IDLE_TIMEOUT		_IOW('b', 3, __s64)
+ #define BINDER_SET_MAX_THREADS		_IOW('b', 5, __u32)
+@@ -276,6 +295,9 @@ struct binder_node_info_for_ref {
+ #define BINDER_GET_NODE_DEBUG_INFO	_IOWR('b', 11, struct binder_node_debug_info)
+ #define BINDER_GET_NODE_INFO_FOR_REF	_IOWR('b', 12, struct binder_node_info_for_ref)
+ #define BINDER_SET_CONTEXT_MGR_EXT	_IOW('b', 13, struct flat_binder_object)
++#define BINDER_FREEZE			_IOW('b', 14, struct binder_freeze_info)
++#define BINDER_GET_FROZEN_INFO		_IOWR('b', 15, struct binder_frozen_status_info)
++/* Samsung vendor ioctl, distinguished from BINDER_FREEZE by size. */
+ #define BINDER_SET_SYSTEM_SERVER_PID		_IOW('b', 14, __u32)
+ 
+ /*
+@@ -461,6 +483,12 @@ enum binder_driver_return_protocol {
+ 	 * The the last transaction (either a bcTRANSACTION or
+ 	 * a bcATTEMPT_ACQUIRE) failed (e.g. out of memory).  No parameters.
+ 	 */
++
++	BR_FROZEN_REPLY = _IO('r', 18),
++	/*
++	 * The target of the last transaction (either a bcTRANSACTION or
++	 * a bcATTEMPT_ACQUIRE) is frozen.  No parameters.
++	 */
+ };
+ 
+ enum binder_driver_command_protocol {
+diff --git a/kernel/cgroup/Makefile b/kernel/cgroup/Makefile
+index ae448f7632cc64753e0e0e4d9c4a0e65d41912a5..3fd48a8123af7d8ceec9368ea733a08677ab6fa9 100755
+--- a/kernel/cgroup/Makefile
++++ b/kernel/cgroup/Makefile
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+-obj-y := cgroup.o namespace.o cgroup-v1.o
++obj-y := cgroup.o namespace.o cgroup-v1.o freezer.o
+ 
+-obj-$(CONFIG_CGROUP_FREEZER) += freezer.o
++obj-$(CONFIG_CGROUP_FREEZER) += legacy_freezer.o
+ obj-$(CONFIG_CGROUP_PIDS) += pids.o
+ obj-$(CONFIG_CGROUP_RDMA) += rdma.o
+ obj-$(CONFIG_CPUSETS) += cpuset.o
+diff --git a/kernel/cgroup/cgroup-internal.h b/kernel/cgroup/cgroup-internal.h
+index bf54ade001be4ada1d9ebd45d3a12930828d94e1..c7e56134cda53bc7f279ac9bfd78f2ec88faed98 100755
+--- a/kernel/cgroup/cgroup-internal.h
++++ b/kernel/cgroup/cgroup-internal.h
+@@ -198,6 +198,7 @@ int cgroup_rmdir(struct kernfs_node *kn);
+ int cgroup_show_path(struct seq_file *sf, struct kernfs_node *kf_node,
+ 		     struct kernfs_root *kf_root);
+ 
++int __cgroup_task_count(const struct cgroup *cgrp);
+ int cgroup_task_count(const struct cgroup *cgrp);
+ 
+ /*
+diff --git a/kernel/cgroup/cgroup-v1.c b/kernel/cgroup/cgroup-v1.c
+index 1d166be184f7b3fd4754925c46f89f9fe3a15558..604718ac3e5bf86636a2c1e1ffc4ee6ed6a0f5e6 100755
+--- a/kernel/cgroup/cgroup-v1.c
++++ b/kernel/cgroup/cgroup-v1.c
+@@ -336,18 +336,27 @@ static struct cgroup_pidlist *cgroup_pidlist_find_create(struct cgroup *cgrp,
+ 	return l;
+ }
+ 
++int __cgroup_task_count(const struct cgroup *cgrp)
++{
++	struct cgrp_cset_link *link;
++	int count = 0;
++
++	lockdep_assert_held(&css_set_lock);
++	list_for_each_entry(link, &cgrp->cset_links, cset_link)
++		count += link->cset->nr_tasks;
++	return count;
++}
++
+ /**
+  * cgroup_task_count - count the number of tasks in a cgroup.
+  * @cgrp: the cgroup in question
+  */
+ int cgroup_task_count(const struct cgroup *cgrp)
+ {
+-	int count = 0;
+-	struct cgrp_cset_link *link;
++	int count;
+ 
+ 	spin_lock_irq(&css_set_lock);
+-	list_for_each_entry(link, &cgrp->cset_links, cset_link)
+-		count += link->cset->nr_tasks;
++	count = __cgroup_task_count(cgrp);
+ 	spin_unlock_irq(&css_set_lock);
+ 	return count;
+ }
+diff --git a/kernel/cgroup/cgroup.c b/kernel/cgroup/cgroup.c
+index aaa14dee34346830944568abcc5aeb18be7e2c65..5175e9cf2f982b46937b13a57c12a563966936d7 100755
+--- a/kernel/cgroup/cgroup.c
++++ b/kernel/cgroup/cgroup.c
+@@ -2279,8 +2279,15 @@ static int cgroup_migrate_execute(struct cgroup_mgctx *mgctx)
+ 			get_css_set(to_cset);
+ 			to_cset->nr_tasks++;
+ 			css_set_move_task(task, from_cset, to_cset, true);
+-			put_css_set_locked(from_cset);
+ 			from_cset->nr_tasks--;
++			/*
++			 * If the source or destination cgroup is frozen,
++			 * the task might require to change its state.
++			 */
++			cgroup_freezer_migrate_task(task, from_cset->dfl_cgrp,
++						    to_cset->dfl_cgrp);
++			put_css_set_locked(from_cset);
++
+ 		}
+ 	}
+ 	spin_unlock_irq(&css_set_lock);
+@@ -3325,8 +3332,11 @@ static ssize_t cgroup_max_depth_write(struct kernfs_open_file *of,
+ 
+ static int cgroup_events_show(struct seq_file *seq, void *v)
+ {
+-	seq_printf(seq, "populated %d\n",
+-		   cgroup_is_populated(seq_css(seq)->cgroup));
++	struct cgroup *cgrp = seq_css(seq)->cgroup;
++
++	seq_printf(seq, "populated %d\n", cgroup_is_populated(cgrp));
++	seq_printf(seq, "frozen %d\n", test_bit(CGRP_FROZEN, &cgrp->flags));
++
+ 	return 0;
+ }
+ 
+@@ -3415,6 +3425,40 @@ static void cgroup_pressure_release(struct kernfs_open_file *of)
+ }
+ #endif /* CONFIG_PSI */
+ 
++static int cgroup_freeze_show(struct seq_file *seq, void *v)
++{
++	struct cgroup *cgrp = seq_css(seq)->cgroup;
++
++	seq_printf(seq, "%d\n", cgrp->freezer.freeze);
++
++	return 0;
++}
++
++static ssize_t cgroup_freeze_write(struct kernfs_open_file *of,
++				   char *buf, size_t nbytes, loff_t off)
++{
++	struct cgroup *cgrp;
++	ssize_t ret;
++	int freeze;
++
++	ret = kstrtoint(strstrip(buf), 0, &freeze);
++	if (ret)
++		return ret;
++
++	if (freeze < 0 || freeze > 1)
++		return -ERANGE;
++
++	cgrp = cgroup_kn_lock_live(of->kn, false);
++	if (!cgrp)
++		return -ENOENT;
++
++	cgroup_freeze(cgrp, freeze);
++
++	cgroup_kn_unlock(of->kn);
++
++	return nbytes;
++}
++
+ static int cgroup_file_open(struct kernfs_open_file *of)
+ {
+ 	struct cftype *cft = of->kn->priv;
+@@ -4584,6 +4628,12 @@ static struct cftype cgroup_base_files[] = {
+ 		.name = "cgroup.stat",
+ 		.seq_show = cgroup_stat_show,
+ 	},
++	{
++		.name = "cgroup.freeze",
++		.flags = CFTYPE_NOT_ON_ROOT,
++		.seq_show = cgroup_freeze_show,
++		.write = cgroup_freeze_write,
++	},
+ #ifdef CONFIG_PSI
+ 	{
+ 		.name = "io.pressure",
+@@ -4918,12 +4968,29 @@ static struct cgroup *cgroup_create(struct cgroup *parent)
+ 	if (ret)
+ 		goto out_idr_free;
+ 
++	/*
++	 * New cgroup inherits effective freeze counter, and
++	 * if the parent has to be frozen, the child has too.
++	 */
++	cgrp->freezer.e_freeze = parent->freezer.e_freeze;
++	if (cgrp->freezer.e_freeze)
++		set_bit(CGRP_FROZEN, &cgrp->flags);
++
+ 	spin_lock_irq(&css_set_lock);
+ 	for (tcgrp = cgrp; tcgrp; tcgrp = cgroup_parent(tcgrp)) {
+ 		cgrp->ancestor_ids[tcgrp->level] = tcgrp->id;
+ 
+-		if (tcgrp != cgrp)
++		if (tcgrp != cgrp) {
+ 			tcgrp->nr_descendants++;
++
++			/*
++			 * If the new cgroup is frozen, all ancestor cgroups
++			 * get a new frozen descendant, but their state can't
++			 * change because of this.
++			 */
++			if (cgrp->freezer.e_freeze)
++				tcgrp->freezer.nr_frozen_descendants++;
++		}
+ 	}
+ 	spin_unlock_irq(&css_set_lock);
+ 
+@@ -5217,6 +5284,12 @@ static int cgroup_destroy_locked(struct cgroup *cgrp)
+ 	for (tcgrp = cgroup_parent(cgrp); tcgrp; tcgrp = cgroup_parent(tcgrp)) {
+ 		tcgrp->nr_descendants--;
+ 		tcgrp->nr_dying_descendants++;
++		/*
++		 * If the dying cgroup is frozen, decrease frozen descendants
++		 * counters of ancestor cgroups.
++		 */
++		if (test_bit(CGRP_FROZEN, &cgrp->flags))
++			tcgrp->freezer.nr_frozen_descendants--;
+ 	}
+ 	spin_unlock_irq(&css_set_lock);
+ 
+@@ -5671,6 +5744,29 @@ void cgroup_post_fork(struct task_struct *child)
+ 			cset->nr_tasks++;
+ 			css_set_move_task(child, NULL, cset, false);
+ 		}
++
++		/*
++		 * If the cgroup has to be frozen, the new task has too.
++		 * Let's set the JOBCTL_TRAP_FREEZE jobctl bit to get
++		 * the task into the frozen state.
++		 */
++		if (unlikely(cgroup_task_freeze(child))) {
++			struct cgroup *cgrp;
++
++			spin_lock(&child->sighand->siglock);
++			WARN_ON_ONCE(child->frozen);
++			cgrp = cset->dfl_cgrp;
++			child->jobctl |= JOBCTL_TRAP_FREEZE;
++			spin_unlock(&child->sighand->siglock);
++
++			/*
++			 * Calling cgroup_update_frozen() isn't required here,
++			 * because it will be called anyway a bit later
++			 * from do_freezer_trap(). So we avoid cgroup's
++			 * transient switch from the frozen state and back.
++			 */
++		}
++
+ 		spin_unlock_irq(&css_set_lock);
+ 	}
+ 
+@@ -5720,6 +5816,11 @@ void cgroup_exit(struct task_struct *tsk)
+ 		css_set_move_task(tsk, cset, NULL, false);
+ 		list_add_tail(&tsk->cg_list, &cset->dying_tasks);
+ 		cset->nr_tasks--;
++
++		WARN_ON_ONCE(cgroup_task_frozen(tsk));
++		if (unlikely(cgroup_task_freeze(tsk)))
++			cgroup_update_frozen(task_dfl_cgroup(tsk));
++
+ 		spin_unlock_irq(&css_set_lock);
+ 	} else {
+ 		get_css_set(cset);
+diff --git a/kernel/cgroup/freezer.c b/kernel/cgroup/freezer.c
+old mode 100755
+new mode 100644
+index 911a554b9a64b8e389c6b534c1ec9c605571bac1..57994d4210645abd02ed2d3b03559ca11fe98f3a
+--- a/kernel/cgroup/freezer.c
++++ b/kernel/cgroup/freezer.c
+@@ -1,519 +1,310 @@
+-/*
+- * cgroup_freezer.c -  control group freezer subsystem
+- *
+- * Copyright IBM Corporation, 2007
+- *
+- * Author : Cedric Le Goater <clg@fr.ibm.com>
+- *
+- * This program is free software; you can redistribute it and/or modify it
+- * under the terms of version 2.1 of the GNU Lesser General Public License
+- * as published by the Free Software Foundation.
+- *
+- * This program is distributed in the hope that it would be useful, but
+- * WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+- */
+-
+-#include <linux/export.h>
+-#include <linux/slab.h>
++//SPDX-License-Identifier: GPL-2.0
+ #include <linux/cgroup.h>
+-#include <linux/fs.h>
+-#include <linux/uaccess.h>
+-#include <linux/freezer.h>
+-#include <linux/seq_file.h>
+-#include <linux/mutex.h>
++#include <linux/sched.h>
++#include <linux/sched/task.h>
++#include <linux/sched/signal.h>
++
++#include "cgroup-internal.h"
+ 
+ /*
+- * A cgroup is freezing if any FREEZING flags are set.  FREEZING_SELF is
+- * set if "FROZEN" is written to freezer.state cgroupfs file, and cleared
+- * for "THAWED".  FREEZING_PARENT is set if the parent freezer is FREEZING
+- * for whatever reason.  IOW, a cgroup has FREEZING_PARENT set if one of
+- * its ancestors has FREEZING_SELF set.
++ * Propagate the cgroup frozen state upwards by the cgroup tree.
+  */
+-enum freezer_state_flags {
+-	CGROUP_FREEZER_ONLINE	= (1 << 0), /* freezer is fully online */
+-	CGROUP_FREEZING_SELF	= (1 << 1), /* this freezer is freezing */
+-	CGROUP_FREEZING_PARENT	= (1 << 2), /* the parent freezer is freezing */
+-	CGROUP_FROZEN		= (1 << 3), /* this and its descendants frozen */
+-
+-	/* mask for all FREEZING flags */
+-	CGROUP_FREEZING		= CGROUP_FREEZING_SELF | CGROUP_FREEZING_PARENT,
+-};
+-
+-struct freezer {
+-	struct cgroup_subsys_state	css;
+-	unsigned int			state;
+-};
+-
+-static DEFINE_MUTEX(freezer_mutex);
+-
+-static inline struct freezer *css_freezer(struct cgroup_subsys_state *css)
++static void cgroup_propagate_frozen(struct cgroup *cgrp, bool frozen)
+ {
+-	return css ? container_of(css, struct freezer, css) : NULL;
+-}
++	int desc = 1;
+ 
+-static inline struct freezer *task_freezer(struct task_struct *task)
+-{
+-	return css_freezer(task_css(task, freezer_cgrp_id));
++	/*
++	 * If the new state is frozen, some freezing ancestor cgroups may change
++	 * their state too, depending on if all their descendants are frozen.
++	 *
++	 * Otherwise, all ancestor cgroups are forced into the non-frozen state.
++	 */
++	while ((cgrp = cgroup_parent(cgrp))) {
++		if (frozen) {
++			cgrp->freezer.nr_frozen_descendants += desc;
++			if (!test_bit(CGRP_FROZEN, &cgrp->flags) &&
++			    test_bit(CGRP_FREEZE, &cgrp->flags) &&
++			    cgrp->freezer.nr_frozen_descendants ==
++			    cgrp->nr_descendants) {
++				set_bit(CGRP_FROZEN, &cgrp->flags);
++				cgroup_file_notify(&cgrp->events_file);
++				desc++;
++			}
++		} else {
++			cgrp->freezer.nr_frozen_descendants -= desc;
++			if (test_bit(CGRP_FROZEN, &cgrp->flags)) {
++				clear_bit(CGRP_FROZEN, &cgrp->flags);
++				cgroup_file_notify(&cgrp->events_file);
++				desc++;
++			}
++		}
++	}
+ }
+ 
+-static struct freezer *parent_freezer(struct freezer *freezer)
++/*
++ * Revisit the cgroup frozen state.
++ * Checks if the cgroup is really frozen and perform all state transitions.
++ */
++void cgroup_update_frozen(struct cgroup *cgrp)
+ {
+-	return css_freezer(freezer->css.parent);
+-}
++	bool frozen;
+ 
+-bool cgroup_freezing(struct task_struct *task)
+-{
+-	bool ret;
++	lockdep_assert_held(&css_set_lock);
+ 
+-	rcu_read_lock();
+-	ret = task_freezer(task)->state & CGROUP_FREEZING;
+-	rcu_read_unlock();
++	/*
++	 * If the cgroup has to be frozen (CGRP_FREEZE bit set),
++	 * and all tasks are frozen and/or stopped, let's consider
++	 * the cgroup frozen. Otherwise it's not frozen.
++	 */
++	frozen = test_bit(CGRP_FREEZE, &cgrp->flags) &&
++		cgrp->freezer.nr_frozen_tasks == __cgroup_task_count(cgrp);
+ 
+-	return ret;
+-}
++	if (frozen) {
++		/* Already there? */
++		if (test_bit(CGRP_FROZEN, &cgrp->flags))
++			return;
+ 
+-static const char *freezer_state_strs(unsigned int state)
+-{
+-	if (state & CGROUP_FROZEN)
+-		return "FROZEN";
+-	if (state & CGROUP_FREEZING)
+-		return "FREEZING";
+-	return "THAWED";
+-};
+-
+-static struct cgroup_subsys_state *
+-freezer_css_alloc(struct cgroup_subsys_state *parent_css)
+-{
+-	struct freezer *freezer;
++		set_bit(CGRP_FROZEN, &cgrp->flags);
++	} else {
++		/* Already there? */
++		if (!test_bit(CGRP_FROZEN, &cgrp->flags))
++			return;
+ 
+-	freezer = kzalloc(sizeof(struct freezer), GFP_KERNEL);
+-	if (!freezer)
+-		return ERR_PTR(-ENOMEM);
++		clear_bit(CGRP_FROZEN, &cgrp->flags);
++	}
++	cgroup_file_notify(&cgrp->events_file);
+ 
+-	return &freezer->css;
++	/* Update the state of ancestor cgroups. */
++	cgroup_propagate_frozen(cgrp, frozen);
+ }
+ 
+-/**
+- * freezer_css_online - commit creation of a freezer css
+- * @css: css being created
+- *
+- * We're committing to creation of @css.  Mark it online and inherit
+- * parent's freezing state while holding both parent's and our
+- * freezer->lock.
++/*
++ * Increment cgroup's nr_frozen_tasks.
+  */
+-static int freezer_css_online(struct cgroup_subsys_state *css)
++static void cgroup_inc_frozen_cnt(struct cgroup *cgrp)
+ {
+-	struct freezer *freezer = css_freezer(css);
+-	struct freezer *parent = parent_freezer(freezer);
+-
+-	mutex_lock(&freezer_mutex);
+-
+-	freezer->state |= CGROUP_FREEZER_ONLINE;
+-
+-	if (parent && (parent->state & CGROUP_FREEZING)) {
+-		freezer->state |= CGROUP_FREEZING_PARENT | CGROUP_FROZEN;
+-		atomic_inc(&system_freezing_cnt);
+-	}
+-
+-	mutex_unlock(&freezer_mutex);
+-	return 0;
++	cgrp->freezer.nr_frozen_tasks++;
+ }
+ 
+-/**
+- * freezer_css_offline - initiate destruction of a freezer css
+- * @css: css being destroyed
+- *
+- * @css is going away.  Mark it dead and decrement system_freezing_count if
+- * it was holding one.
++/*
++ * Decrement cgroup's nr_frozen_tasks.
+  */
+-static void freezer_css_offline(struct cgroup_subsys_state *css)
++static void cgroup_dec_frozen_cnt(struct cgroup *cgrp)
+ {
+-	struct freezer *freezer = css_freezer(css);
+-
+-	mutex_lock(&freezer_mutex);
+-
+-	if (freezer->state & CGROUP_FREEZING)
+-		atomic_dec(&system_freezing_cnt);
+-
+-	freezer->state = 0;
+-
+-	mutex_unlock(&freezer_mutex);
++	cgrp->freezer.nr_frozen_tasks--;
++	WARN_ON_ONCE(cgrp->freezer.nr_frozen_tasks < 0);
+ }
+ 
+-static void freezer_css_free(struct cgroup_subsys_state *css)
++/*
++ * Enter frozen/stopped state, if not yet there. Update cgroup's counters,
++ * and revisit the state of the cgroup, if necessary.
++ */
++void cgroup_enter_frozen(void)
+ {
+-	kfree(css_freezer(css));
++	struct cgroup *cgrp;
++
++	if (current->frozen)
++		return;
++
++	spin_lock_irq(&css_set_lock);
++	current->frozen = true;
++	cgrp = task_dfl_cgroup(current);
++	cgroup_inc_frozen_cnt(cgrp);
++	cgroup_update_frozen(cgrp);
++	spin_unlock_irq(&css_set_lock);
+ }
+ 
+ /*
+- * Tasks can be migrated into a different freezer anytime regardless of its
+- * current state.  freezer_attach() is responsible for making new tasks
+- * conform to the current state.
++ * Conditionally leave frozen/stopped state. Update cgroup's counters,
++ * and revisit the state of the cgroup, if necessary.
+  *
+- * Freezer state changes and task migration are synchronized via
+- * @freezer->lock.  freezer_attach() makes the new tasks conform to the
+- * current state and all following state changes can see the new tasks.
++ * If always_leave is not set, and the cgroup is freezing,
++ * we're racing with the cgroup freezing. In this case, we don't
++ * drop the frozen counter to avoid a transient switch to
++ * the unfrozen state.
+  */
+-static void freezer_attach(struct cgroup_taskset *tset)
++void cgroup_leave_frozen(bool always_leave)
+ {
+-	struct task_struct *task;
+-	struct cgroup_subsys_state *new_css;
+-
+-	mutex_lock(&freezer_mutex);
+-
+-	/*
+-	 * Make the new tasks conform to the current state of @new_css.
+-	 * For simplicity, when migrating any task to a FROZEN cgroup, we
+-	 * revert it to FREEZING and let update_if_frozen() determine the
+-	 * correct state later.
+-	 *
+-	 * Tasks in @tset are on @new_css but may not conform to its
+-	 * current state before executing the following - !frozen tasks may
+-	 * be visible in a FROZEN cgroup and frozen tasks in a THAWED one.
+-	 */
+-	cgroup_taskset_for_each(task, new_css, tset) {
+-		struct freezer *freezer = css_freezer(new_css);
+-
+-		if (!(freezer->state & CGROUP_FREEZING)) {
+-			__thaw_task(task);
+-		} else {
+-			freeze_task(task);
+-			/* clear FROZEN and propagate upwards */
+-			while (freezer && (freezer->state & CGROUP_FROZEN)) {
+-				freezer->state &= ~CGROUP_FROZEN;
+-				freezer = parent_freezer(freezer);
+-			}
+-		}
++	struct cgroup *cgrp;
++
++	spin_lock_irq(&css_set_lock);
++	cgrp = task_dfl_cgroup(current);
++	if (always_leave || !test_bit(CGRP_FREEZE, &cgrp->flags)) {
++		cgroup_dec_frozen_cnt(cgrp);
++		cgroup_update_frozen(cgrp);
++		WARN_ON_ONCE(!current->frozen);
++		current->frozen = false;
++	} else if (!(current->jobctl & JOBCTL_TRAP_FREEZE)) {
++		spin_lock(&current->sighand->siglock);
++		current->jobctl |= JOBCTL_TRAP_FREEZE;
++		set_thread_flag(TIF_SIGPENDING);
++		spin_unlock(&current->sighand->siglock);
+ 	}
+-
+-	mutex_unlock(&freezer_mutex);
++	spin_unlock_irq(&css_set_lock);
+ }
+ 
+-/**
+- * freezer_fork - cgroup post fork callback
+- * @task: a task which has just been forked
+- *
+- * @task has just been created and should conform to the current state of
+- * the cgroup_freezer it belongs to.  This function may race against
+- * freezer_attach().  Losing to freezer_attach() means that we don't have
+- * to do anything as freezer_attach() will put @task into the appropriate
+- * state.
++/*
++ * Freeze or unfreeze the task by setting or clearing the JOBCTL_TRAP_FREEZE
++ * jobctl bit.
+  */
+-static void freezer_fork(struct task_struct *task)
++static void cgroup_freeze_task(struct task_struct *task, bool freeze)
+ {
+-	struct freezer *freezer;
++	unsigned long flags;
+ 
+-	/*
+-	 * The root cgroup is non-freezable, so we can skip locking the
+-	 * freezer.  This is safe regardless of race with task migration.
+-	 * If we didn't race or won, skipping is obviously the right thing
+-	 * to do.  If we lost and root is the new cgroup, noop is still the
+-	 * right thing to do.
+-	 */
+-	if (task_css_is_root(task, freezer_cgrp_id))
++	/* If the task is about to die, don't bother with freezing it. */
++	if (!lock_task_sighand(task, &flags))
+ 		return;
+ 
+-	mutex_lock(&freezer_mutex);
+-	rcu_read_lock();
+-
+-	freezer = task_freezer(task);
+-	if (freezer->state & CGROUP_FREEZING)
+-		freeze_task(task);
++	if (freeze) {
++		task->jobctl |= JOBCTL_TRAP_FREEZE;
++		signal_wake_up(task, false);
++	} else {
++		task->jobctl &= ~JOBCTL_TRAP_FREEZE;
++		wake_up_process(task);
++	}
+ 
+-	rcu_read_unlock();
+-	mutex_unlock(&freezer_mutex);
++	unlock_task_sighand(task, &flags);
+ }
+ 
+-/**
+- * update_if_frozen - update whether a cgroup finished freezing
+- * @css: css of interest
+- *
+- * Once FREEZING is initiated, transition to FROZEN is lazily updated by
+- * calling this function.  If the current state is FREEZING but not FROZEN,
+- * this function checks whether all tasks of this cgroup and the descendant
+- * cgroups finished freezing and, if so, sets FROZEN.
+- *
+- * The caller is responsible for grabbing RCU read lock and calling
+- * update_if_frozen() on all descendants prior to invoking this function.
+- *
+- * Task states and freezer state might disagree while tasks are being
+- * migrated into or out of @css, so we can't verify task states against
+- * @freezer state here.  See freezer_attach() for details.
++/*
++ * Freeze or unfreeze all tasks in the given cgroup.
+  */
+-static void update_if_frozen(struct cgroup_subsys_state *css)
++static void cgroup_do_freeze(struct cgroup *cgrp, bool freeze)
+ {
+-	struct freezer *freezer = css_freezer(css);
+-	struct cgroup_subsys_state *pos;
+ 	struct css_task_iter it;
+ 	struct task_struct *task;
+ 
+-	lockdep_assert_held(&freezer_mutex);
+-
+-	if (!(freezer->state & CGROUP_FREEZING) ||
+-	    (freezer->state & CGROUP_FROZEN))
+-		return;
+-
+-	/* are all (live) children frozen? */
+-	rcu_read_lock();
+-	css_for_each_child(pos, css) {
+-		struct freezer *child = css_freezer(pos);
+-
+-		if ((child->state & CGROUP_FREEZER_ONLINE) &&
+-		    !(child->state & CGROUP_FROZEN)) {
+-			rcu_read_unlock();
+-			return;
+-		}
+-	}
+-	rcu_read_unlock();
++	lockdep_assert_held(&cgroup_mutex);
+ 
+-	/* are all tasks frozen? */
+-	css_task_iter_start(css, 0, &it);
++	spin_lock_irq(&css_set_lock);
++	if (freeze)
++		set_bit(CGRP_FREEZE, &cgrp->flags);
++	else
++		clear_bit(CGRP_FREEZE, &cgrp->flags);
++	spin_unlock_irq(&css_set_lock);
+ 
++	css_task_iter_start(&cgrp->self, 0, &it);
+ 	while ((task = css_task_iter_next(&it))) {
+-		if (freezing(task)) {
+-			/*
+-			 * freezer_should_skip() indicates that the task
+-			 * should be skipped when determining freezing
+-			 * completion.  Consider it frozen in addition to
+-			 * the usual frozen condition.
+-			 */
+-			if (!frozen(task) && !freezer_should_skip(task))
+-				goto out_iter_end;
+-		}
+-	}
+-
+-	freezer->state |= CGROUP_FROZEN;
+-out_iter_end:
+-	css_task_iter_end(&it);
+-}
+-
+-static int freezer_read(struct seq_file *m, void *v)
+-{
+-	struct cgroup_subsys_state *css = seq_css(m), *pos;
+-
+-	mutex_lock(&freezer_mutex);
+-	rcu_read_lock();
+-
+-	/* update states bottom-up */
+-	css_for_each_descendant_post(pos, css) {
+-		if (!css_tryget_online(pos))
++		/*
++		 * Ignore kernel threads here. Freezing cgroups containing
++		 * kthreads isn't supported.
++		 */
++		if (task->flags & PF_KTHREAD)
+ 			continue;
+-		rcu_read_unlock();
+-
+-		update_if_frozen(pos);
+-
+-		rcu_read_lock();
+-		css_put(pos);
++		cgroup_freeze_task(task, freeze);
+ 	}
+-
+-	rcu_read_unlock();
+-	mutex_unlock(&freezer_mutex);
+-
+-	seq_puts(m, freezer_state_strs(css_freezer(css)->state));
+-	seq_putc(m, '\n');
+-	return 0;
+-}
+-
+-static void freeze_cgroup(struct freezer *freezer)
+-{
+-	struct css_task_iter it;
+-	struct task_struct *task;
+-
+-	css_task_iter_start(&freezer->css, 0, &it);
+-	while ((task = css_task_iter_next(&it)))
+-		freeze_task(task);
+ 	css_task_iter_end(&it);
+-}
+-
+-static void unfreeze_cgroup(struct freezer *freezer)
+-{
+-	struct css_task_iter it;
+-	struct task_struct *task;
+ 
+-	css_task_iter_start(&freezer->css, 0, &it);
+-	while ((task = css_task_iter_next(&it)))
+-		__thaw_task(task);
+-	css_task_iter_end(&it);
++	/*
++	 * Cgroup state should be revisited here to cover empty leaf cgroups
++	 * and cgroups which descendants are already in the desired state.
++	 */
++	spin_lock_irq(&css_set_lock);
++	if (cgrp->nr_descendants == cgrp->freezer.nr_frozen_descendants)
++		cgroup_update_frozen(cgrp);
++	spin_unlock_irq(&css_set_lock);
+ }
+ 
+-/**
+- * freezer_apply_state - apply state change to a single cgroup_freezer
+- * @freezer: freezer to apply state change to
+- * @freeze: whether to freeze or unfreeze
+- * @state: CGROUP_FREEZING_* flag to set or clear
+- *
+- * Set or clear @state on @cgroup according to @freeze, and perform
+- * freezing or thawing as necessary.
++/*
++ * Adjust the task state (freeze or unfreeze) and revisit the state of
++ * source and destination cgroups.
+  */
+-static void freezer_apply_state(struct freezer *freezer, bool freeze,
+-				unsigned int state)
++void cgroup_freezer_migrate_task(struct task_struct *task,
++				 struct cgroup *src, struct cgroup *dst)
+ {
+-	/* also synchronizes against task migration, see freezer_attach() */
+-	lockdep_assert_held(&freezer_mutex);
++	lockdep_assert_held(&css_set_lock);
+ 
+-	if (!(freezer->state & CGROUP_FREEZER_ONLINE))
++	/*
++	 * Kernel threads are not supposed to be frozen at all.
++	 */
++	if (task->flags & PF_KTHREAD)
+ 		return;
+ 
+-	if (freeze) {
+-		if (!(freezer->state & CGROUP_FREEZING))
+-			atomic_inc(&system_freezing_cnt);
+-		freezer->state |= state;
+-		freeze_cgroup(freezer);
+-	} else {
+-		bool was_freezing = freezer->state & CGROUP_FREEZING;
+-
+-		freezer->state &= ~state;
++	/*
++	 * It's not necessary to do changes if both of the src and dst cgroups
++	 * are not freezing and task is not frozen.
++	 */
++	if (!test_bit(CGRP_FREEZE, &src->flags) &&
++	    !test_bit(CGRP_FREEZE, &dst->flags) &&
++	    !task->frozen)
++		return;
+ 
+-		if (!(freezer->state & CGROUP_FREEZING)) {
+-			if (was_freezing)
+-				atomic_dec(&system_freezing_cnt);
+-			freezer->state &= ~CGROUP_FROZEN;
+-			unfreeze_cgroup(freezer);
+-		}
++	/*
++	 * Adjust counters of freezing and frozen tasks.
++	 * Note, that if the task is frozen, but the destination cgroup is not
++	 * frozen, we bump both counters to keep them balanced.
++	 */
++	if (task->frozen) {
++		cgroup_inc_frozen_cnt(dst);
++		cgroup_dec_frozen_cnt(src);
+ 	}
+-}
+-
+-/**
+- * freezer_change_state - change the freezing state of a cgroup_freezer
+- * @freezer: freezer of interest
+- * @freeze: whether to freeze or thaw
+- *
+- * Freeze or thaw @freezer according to @freeze.  The operations are
+- * recursive - all descendants of @freezer will be affected.
+- */
+-static void freezer_change_state(struct freezer *freezer, bool freeze)
+-{
+-	struct cgroup_subsys_state *pos;
++	cgroup_update_frozen(dst);
++	cgroup_update_frozen(src);
+ 
+ 	/*
+-	 * Update all its descendants in pre-order traversal.  Each
+-	 * descendant will try to inherit its parent's FREEZING state as
+-	 * CGROUP_FREEZING_PARENT.
++	 * Force the task to the desired state.
+ 	 */
+-	mutex_lock(&freezer_mutex);
+-	rcu_read_lock();
+-	css_for_each_descendant_pre(pos, &freezer->css) {
+-		struct freezer *pos_f = css_freezer(pos);
+-		struct freezer *parent = parent_freezer(pos_f);
+-
+-		if (!css_tryget_online(pos))
+-			continue;
+-		rcu_read_unlock();
+-
+-		if (pos_f == freezer)
+-			freezer_apply_state(pos_f, freeze,
+-					    CGROUP_FREEZING_SELF);
+-		else
+-			freezer_apply_state(pos_f,
+-					    parent->state & CGROUP_FREEZING,
+-					    CGROUP_FREEZING_PARENT);
+-
+-		rcu_read_lock();
+-		css_put(pos);
+-	}
+-	rcu_read_unlock();
+-	mutex_unlock(&freezer_mutex);
++	cgroup_freeze_task(task, test_bit(CGRP_FREEZE, &dst->flags));
+ }
+ 
+-static ssize_t freezer_write(struct kernfs_open_file *of,
+-			     char *buf, size_t nbytes, loff_t off)
++void cgroup_freeze(struct cgroup *cgrp, bool freeze)
+ {
+-	bool freeze;
+-
+-	buf = strstrip(buf);
+-
+-	if (strcmp(buf, freezer_state_strs(0)) == 0)
+-		freeze = false;
+-	else if (strcmp(buf, freezer_state_strs(CGROUP_FROZEN)) == 0)
+-		freeze = true;
+-	else
+-		return -EINVAL;
+-
+-	freezer_change_state(css_freezer(of_css(of)), freeze);
+-	return nbytes;
+-}
++	struct cgroup_subsys_state *css;
++	struct cgroup *dsct;
++	bool applied = false;
+ 
+-static u64 freezer_self_freezing_read(struct cgroup_subsys_state *css,
+-				      struct cftype *cft)
+-{
+-	struct freezer *freezer = css_freezer(css);
++	lockdep_assert_held(&cgroup_mutex);
+ 
+-	return (bool)(freezer->state & CGROUP_FREEZING_SELF);
+-}
++	/*
++	 * Nothing changed? Just exit.
++	 */
++	if (cgrp->freezer.freeze == freeze)
++		return;
+ 
+-static u64 freezer_parent_freezing_read(struct cgroup_subsys_state *css,
+-					struct cftype *cft)
+-{
+-	struct freezer *freezer = css_freezer(css);
++	cgrp->freezer.freeze = freeze;
+ 
+-	return (bool)(freezer->state & CGROUP_FREEZING_PARENT);
+-}
++	/*
++	 * Propagate changes downwards the cgroup tree.
++	 */
++	css_for_each_descendant_pre(css, &cgrp->self) {
++		dsct = css->cgroup;
+ 
+-#ifdef CONFIG_SAMSUNG_FREECESS
+-/**
+- * Check if the task is allowed to be added to the freezer group
+- * only the admin can add the task to the freezer group.
+- */
+-static int freezer_can_attach(struct cgroup_taskset *tset)
+-{
+-	const struct cred *cred = current_cred(), *tcred;
+-	struct task_struct *task;
+-	struct cgroup_subsys_state *css;
++		if (cgroup_is_dead(dsct))
++			continue;
+ 
+-	cgroup_taskset_for_each(task, css, tset) {
+-		tcred = __task_cred(task);
++		if (freeze) {
++			dsct->freezer.e_freeze++;
++			/*
++			 * Already frozen because of ancestor's settings?
++			 */
++			if (dsct->freezer.e_freeze > 1)
++				continue;
++		} else {
++			dsct->freezer.e_freeze--;
++			/*
++			 * Still frozen because of ancestor's settings?
++			 */
++			if (dsct->freezer.e_freeze > 0)
++				continue;
+ 
+-		//Only system process and root have the permission.
+-		if ((current != task) && !(cred->euid.val == 1000 || capable(CAP_SYS_ADMIN))) {
+-			pr_err("Permission problem\n");
+-			return -EACCES;
++			WARN_ON_ONCE(dsct->freezer.e_freeze < 0);
+ 		}
+-	}
+ 
+-	return 0;
+-}
++		/*
++		 * Do change actual state: freeze or unfreeze.
++		 */
++		cgroup_do_freeze(dsct, freeze);
++		applied = true;
++	}
+ 
+-/**
+- * Cancel the attach action when it failed. It's usually used to restore the attach action.
+- * But freezer attach just sends the signal, it will always success.
+- * So, it doesn't need to restore any action.
+- */
+-static void freezer_cancel_attach(struct cgroup_taskset *tset)
+-{
++	/*
++	 * Even if the actual state hasn't changed, let's notify a user.
++	 * The state can be enforced by an ancestor cgroup: the cgroup
++	 * can already be in the desired state or it can be locked in the
++	 * opposite state, so that the transition will never happen.
++	 * In both cases it's better to notify a user, that there is
++	 * nothing to wait for.
++	 */
++	if (!applied)
++		cgroup_file_notify(&cgrp->events_file);
+ }
+-#endif
+-
+-static struct cftype files[] = {
+-	{
+-		.name = "state",
+-		.flags = CFTYPE_NOT_ON_ROOT,
+-		.seq_show = freezer_read,
+-		.write = freezer_write,
+-	},
+-	{
+-		.name = "self_freezing",
+-		.flags = CFTYPE_NOT_ON_ROOT,
+-		.read_u64 = freezer_self_freezing_read,
+-	},
+-	{
+-		.name = "parent_freezing",
+-		.flags = CFTYPE_NOT_ON_ROOT,
+-		.read_u64 = freezer_parent_freezing_read,
+-	},
+-	{ }	/* terminate */
+-};
+-
+-struct cgroup_subsys freezer_cgrp_subsys = {
+-	.css_alloc	= freezer_css_alloc,
+-	.css_online	= freezer_css_online,
+-	.css_offline	= freezer_css_offline,
+-	.css_free	= freezer_css_free,
+-	.attach		= freezer_attach,
+-	.fork		= freezer_fork,
+-	.legacy_cftypes	= files,
+-#ifdef CONFIG_SAMSUNG_FREECESS
+-	.can_attach   = freezer_can_attach,
+-	.cancel_attach  = freezer_cancel_attach,
+-#endif
+-};
+diff --git a/kernel/cgroup/legacy_freezer.c b/kernel/cgroup/legacy_freezer.c
+new file mode 100755
+index 0000000000000000000000000000000000000000..911a554b9a64b8e389c6b534c1ec9c605571bac1
+--- /dev/null
++++ b/kernel/cgroup/legacy_freezer.c
+@@ -0,0 +1,519 @@
++/*
++ * cgroup_freezer.c -  control group freezer subsystem
++ *
++ * Copyright IBM Corporation, 2007
++ *
++ * Author : Cedric Le Goater <clg@fr.ibm.com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of version 2.1 of the GNU Lesser General Public License
++ * as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it would be useful, but
++ * WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ */
++
++#include <linux/export.h>
++#include <linux/slab.h>
++#include <linux/cgroup.h>
++#include <linux/fs.h>
++#include <linux/uaccess.h>
++#include <linux/freezer.h>
++#include <linux/seq_file.h>
++#include <linux/mutex.h>
++
++/*
++ * A cgroup is freezing if any FREEZING flags are set.  FREEZING_SELF is
++ * set if "FROZEN" is written to freezer.state cgroupfs file, and cleared
++ * for "THAWED".  FREEZING_PARENT is set if the parent freezer is FREEZING
++ * for whatever reason.  IOW, a cgroup has FREEZING_PARENT set if one of
++ * its ancestors has FREEZING_SELF set.
++ */
++enum freezer_state_flags {
++	CGROUP_FREEZER_ONLINE	= (1 << 0), /* freezer is fully online */
++	CGROUP_FREEZING_SELF	= (1 << 1), /* this freezer is freezing */
++	CGROUP_FREEZING_PARENT	= (1 << 2), /* the parent freezer is freezing */
++	CGROUP_FROZEN		= (1 << 3), /* this and its descendants frozen */
++
++	/* mask for all FREEZING flags */
++	CGROUP_FREEZING		= CGROUP_FREEZING_SELF | CGROUP_FREEZING_PARENT,
++};
++
++struct freezer {
++	struct cgroup_subsys_state	css;
++	unsigned int			state;
++};
++
++static DEFINE_MUTEX(freezer_mutex);
++
++static inline struct freezer *css_freezer(struct cgroup_subsys_state *css)
++{
++	return css ? container_of(css, struct freezer, css) : NULL;
++}
++
++static inline struct freezer *task_freezer(struct task_struct *task)
++{
++	return css_freezer(task_css(task, freezer_cgrp_id));
++}
++
++static struct freezer *parent_freezer(struct freezer *freezer)
++{
++	return css_freezer(freezer->css.parent);
++}
++
++bool cgroup_freezing(struct task_struct *task)
++{
++	bool ret;
++
++	rcu_read_lock();
++	ret = task_freezer(task)->state & CGROUP_FREEZING;
++	rcu_read_unlock();
++
++	return ret;
++}
++
++static const char *freezer_state_strs(unsigned int state)
++{
++	if (state & CGROUP_FROZEN)
++		return "FROZEN";
++	if (state & CGROUP_FREEZING)
++		return "FREEZING";
++	return "THAWED";
++};
++
++static struct cgroup_subsys_state *
++freezer_css_alloc(struct cgroup_subsys_state *parent_css)
++{
++	struct freezer *freezer;
++
++	freezer = kzalloc(sizeof(struct freezer), GFP_KERNEL);
++	if (!freezer)
++		return ERR_PTR(-ENOMEM);
++
++	return &freezer->css;
++}
++
++/**
++ * freezer_css_online - commit creation of a freezer css
++ * @css: css being created
++ *
++ * We're committing to creation of @css.  Mark it online and inherit
++ * parent's freezing state while holding both parent's and our
++ * freezer->lock.
++ */
++static int freezer_css_online(struct cgroup_subsys_state *css)
++{
++	struct freezer *freezer = css_freezer(css);
++	struct freezer *parent = parent_freezer(freezer);
++
++	mutex_lock(&freezer_mutex);
++
++	freezer->state |= CGROUP_FREEZER_ONLINE;
++
++	if (parent && (parent->state & CGROUP_FREEZING)) {
++		freezer->state |= CGROUP_FREEZING_PARENT | CGROUP_FROZEN;
++		atomic_inc(&system_freezing_cnt);
++	}
++
++	mutex_unlock(&freezer_mutex);
++	return 0;
++}
++
++/**
++ * freezer_css_offline - initiate destruction of a freezer css
++ * @css: css being destroyed
++ *
++ * @css is going away.  Mark it dead and decrement system_freezing_count if
++ * it was holding one.
++ */
++static void freezer_css_offline(struct cgroup_subsys_state *css)
++{
++	struct freezer *freezer = css_freezer(css);
++
++	mutex_lock(&freezer_mutex);
++
++	if (freezer->state & CGROUP_FREEZING)
++		atomic_dec(&system_freezing_cnt);
++
++	freezer->state = 0;
++
++	mutex_unlock(&freezer_mutex);
++}
++
++static void freezer_css_free(struct cgroup_subsys_state *css)
++{
++	kfree(css_freezer(css));
++}
++
++/*
++ * Tasks can be migrated into a different freezer anytime regardless of its
++ * current state.  freezer_attach() is responsible for making new tasks
++ * conform to the current state.
++ *
++ * Freezer state changes and task migration are synchronized via
++ * @freezer->lock.  freezer_attach() makes the new tasks conform to the
++ * current state and all following state changes can see the new tasks.
++ */
++static void freezer_attach(struct cgroup_taskset *tset)
++{
++	struct task_struct *task;
++	struct cgroup_subsys_state *new_css;
++
++	mutex_lock(&freezer_mutex);
++
++	/*
++	 * Make the new tasks conform to the current state of @new_css.
++	 * For simplicity, when migrating any task to a FROZEN cgroup, we
++	 * revert it to FREEZING and let update_if_frozen() determine the
++	 * correct state later.
++	 *
++	 * Tasks in @tset are on @new_css but may not conform to its
++	 * current state before executing the following - !frozen tasks may
++	 * be visible in a FROZEN cgroup and frozen tasks in a THAWED one.
++	 */
++	cgroup_taskset_for_each(task, new_css, tset) {
++		struct freezer *freezer = css_freezer(new_css);
++
++		if (!(freezer->state & CGROUP_FREEZING)) {
++			__thaw_task(task);
++		} else {
++			freeze_task(task);
++			/* clear FROZEN and propagate upwards */
++			while (freezer && (freezer->state & CGROUP_FROZEN)) {
++				freezer->state &= ~CGROUP_FROZEN;
++				freezer = parent_freezer(freezer);
++			}
++		}
++	}
++
++	mutex_unlock(&freezer_mutex);
++}
++
++/**
++ * freezer_fork - cgroup post fork callback
++ * @task: a task which has just been forked
++ *
++ * @task has just been created and should conform to the current state of
++ * the cgroup_freezer it belongs to.  This function may race against
++ * freezer_attach().  Losing to freezer_attach() means that we don't have
++ * to do anything as freezer_attach() will put @task into the appropriate
++ * state.
++ */
++static void freezer_fork(struct task_struct *task)
++{
++	struct freezer *freezer;
++
++	/*
++	 * The root cgroup is non-freezable, so we can skip locking the
++	 * freezer.  This is safe regardless of race with task migration.
++	 * If we didn't race or won, skipping is obviously the right thing
++	 * to do.  If we lost and root is the new cgroup, noop is still the
++	 * right thing to do.
++	 */
++	if (task_css_is_root(task, freezer_cgrp_id))
++		return;
++
++	mutex_lock(&freezer_mutex);
++	rcu_read_lock();
++
++	freezer = task_freezer(task);
++	if (freezer->state & CGROUP_FREEZING)
++		freeze_task(task);
++
++	rcu_read_unlock();
++	mutex_unlock(&freezer_mutex);
++}
++
++/**
++ * update_if_frozen - update whether a cgroup finished freezing
++ * @css: css of interest
++ *
++ * Once FREEZING is initiated, transition to FROZEN is lazily updated by
++ * calling this function.  If the current state is FREEZING but not FROZEN,
++ * this function checks whether all tasks of this cgroup and the descendant
++ * cgroups finished freezing and, if so, sets FROZEN.
++ *
++ * The caller is responsible for grabbing RCU read lock and calling
++ * update_if_frozen() on all descendants prior to invoking this function.
++ *
++ * Task states and freezer state might disagree while tasks are being
++ * migrated into or out of @css, so we can't verify task states against
++ * @freezer state here.  See freezer_attach() for details.
++ */
++static void update_if_frozen(struct cgroup_subsys_state *css)
++{
++	struct freezer *freezer = css_freezer(css);
++	struct cgroup_subsys_state *pos;
++	struct css_task_iter it;
++	struct task_struct *task;
++
++	lockdep_assert_held(&freezer_mutex);
++
++	if (!(freezer->state & CGROUP_FREEZING) ||
++	    (freezer->state & CGROUP_FROZEN))
++		return;
++
++	/* are all (live) children frozen? */
++	rcu_read_lock();
++	css_for_each_child(pos, css) {
++		struct freezer *child = css_freezer(pos);
++
++		if ((child->state & CGROUP_FREEZER_ONLINE) &&
++		    !(child->state & CGROUP_FROZEN)) {
++			rcu_read_unlock();
++			return;
++		}
++	}
++	rcu_read_unlock();
++
++	/* are all tasks frozen? */
++	css_task_iter_start(css, 0, &it);
++
++	while ((task = css_task_iter_next(&it))) {
++		if (freezing(task)) {
++			/*
++			 * freezer_should_skip() indicates that the task
++			 * should be skipped when determining freezing
++			 * completion.  Consider it frozen in addition to
++			 * the usual frozen condition.
++			 */
++			if (!frozen(task) && !freezer_should_skip(task))
++				goto out_iter_end;
++		}
++	}
++
++	freezer->state |= CGROUP_FROZEN;
++out_iter_end:
++	css_task_iter_end(&it);
++}
++
++static int freezer_read(struct seq_file *m, void *v)
++{
++	struct cgroup_subsys_state *css = seq_css(m), *pos;
++
++	mutex_lock(&freezer_mutex);
++	rcu_read_lock();
++
++	/* update states bottom-up */
++	css_for_each_descendant_post(pos, css) {
++		if (!css_tryget_online(pos))
++			continue;
++		rcu_read_unlock();
++
++		update_if_frozen(pos);
++
++		rcu_read_lock();
++		css_put(pos);
++	}
++
++	rcu_read_unlock();
++	mutex_unlock(&freezer_mutex);
++
++	seq_puts(m, freezer_state_strs(css_freezer(css)->state));
++	seq_putc(m, '\n');
++	return 0;
++}
++
++static void freeze_cgroup(struct freezer *freezer)
++{
++	struct css_task_iter it;
++	struct task_struct *task;
++
++	css_task_iter_start(&freezer->css, 0, &it);
++	while ((task = css_task_iter_next(&it)))
++		freeze_task(task);
++	css_task_iter_end(&it);
++}
++
++static void unfreeze_cgroup(struct freezer *freezer)
++{
++	struct css_task_iter it;
++	struct task_struct *task;
++
++	css_task_iter_start(&freezer->css, 0, &it);
++	while ((task = css_task_iter_next(&it)))
++		__thaw_task(task);
++	css_task_iter_end(&it);
++}
++
++/**
++ * freezer_apply_state - apply state change to a single cgroup_freezer
++ * @freezer: freezer to apply state change to
++ * @freeze: whether to freeze or unfreeze
++ * @state: CGROUP_FREEZING_* flag to set or clear
++ *
++ * Set or clear @state on @cgroup according to @freeze, and perform
++ * freezing or thawing as necessary.
++ */
++static void freezer_apply_state(struct freezer *freezer, bool freeze,
++				unsigned int state)
++{
++	/* also synchronizes against task migration, see freezer_attach() */
++	lockdep_assert_held(&freezer_mutex);
++
++	if (!(freezer->state & CGROUP_FREEZER_ONLINE))
++		return;
++
++	if (freeze) {
++		if (!(freezer->state & CGROUP_FREEZING))
++			atomic_inc(&system_freezing_cnt);
++		freezer->state |= state;
++		freeze_cgroup(freezer);
++	} else {
++		bool was_freezing = freezer->state & CGROUP_FREEZING;
++
++		freezer->state &= ~state;
++
++		if (!(freezer->state & CGROUP_FREEZING)) {
++			if (was_freezing)
++				atomic_dec(&system_freezing_cnt);
++			freezer->state &= ~CGROUP_FROZEN;
++			unfreeze_cgroup(freezer);
++		}
++	}
++}
++
++/**
++ * freezer_change_state - change the freezing state of a cgroup_freezer
++ * @freezer: freezer of interest
++ * @freeze: whether to freeze or thaw
++ *
++ * Freeze or thaw @freezer according to @freeze.  The operations are
++ * recursive - all descendants of @freezer will be affected.
++ */
++static void freezer_change_state(struct freezer *freezer, bool freeze)
++{
++	struct cgroup_subsys_state *pos;
++
++	/*
++	 * Update all its descendants in pre-order traversal.  Each
++	 * descendant will try to inherit its parent's FREEZING state as
++	 * CGROUP_FREEZING_PARENT.
++	 */
++	mutex_lock(&freezer_mutex);
++	rcu_read_lock();
++	css_for_each_descendant_pre(pos, &freezer->css) {
++		struct freezer *pos_f = css_freezer(pos);
++		struct freezer *parent = parent_freezer(pos_f);
++
++		if (!css_tryget_online(pos))
++			continue;
++		rcu_read_unlock();
++
++		if (pos_f == freezer)
++			freezer_apply_state(pos_f, freeze,
++					    CGROUP_FREEZING_SELF);
++		else
++			freezer_apply_state(pos_f,
++					    parent->state & CGROUP_FREEZING,
++					    CGROUP_FREEZING_PARENT);
++
++		rcu_read_lock();
++		css_put(pos);
++	}
++	rcu_read_unlock();
++	mutex_unlock(&freezer_mutex);
++}
++
++static ssize_t freezer_write(struct kernfs_open_file *of,
++			     char *buf, size_t nbytes, loff_t off)
++{
++	bool freeze;
++
++	buf = strstrip(buf);
++
++	if (strcmp(buf, freezer_state_strs(0)) == 0)
++		freeze = false;
++	else if (strcmp(buf, freezer_state_strs(CGROUP_FROZEN)) == 0)
++		freeze = true;
++	else
++		return -EINVAL;
++
++	freezer_change_state(css_freezer(of_css(of)), freeze);
++	return nbytes;
++}
++
++static u64 freezer_self_freezing_read(struct cgroup_subsys_state *css,
++				      struct cftype *cft)
++{
++	struct freezer *freezer = css_freezer(css);
++
++	return (bool)(freezer->state & CGROUP_FREEZING_SELF);
++}
++
++static u64 freezer_parent_freezing_read(struct cgroup_subsys_state *css,
++					struct cftype *cft)
++{
++	struct freezer *freezer = css_freezer(css);
++
++	return (bool)(freezer->state & CGROUP_FREEZING_PARENT);
++}
++
++#ifdef CONFIG_SAMSUNG_FREECESS
++/**
++ * Check if the task is allowed to be added to the freezer group
++ * only the admin can add the task to the freezer group.
++ */
++static int freezer_can_attach(struct cgroup_taskset *tset)
++{
++	const struct cred *cred = current_cred(), *tcred;
++	struct task_struct *task;
++	struct cgroup_subsys_state *css;
++
++	cgroup_taskset_for_each(task, css, tset) {
++		tcred = __task_cred(task);
++
++		//Only system process and root have the permission.
++		if ((current != task) && !(cred->euid.val == 1000 || capable(CAP_SYS_ADMIN))) {
++			pr_err("Permission problem\n");
++			return -EACCES;
++		}
++	}
++
++	return 0;
++}
++
++/**
++ * Cancel the attach action when it failed. It's usually used to restore the attach action.
++ * But freezer attach just sends the signal, it will always success.
++ * So, it doesn't need to restore any action.
++ */
++static void freezer_cancel_attach(struct cgroup_taskset *tset)
++{
++}
++#endif
++
++static struct cftype files[] = {
++	{
++		.name = "state",
++		.flags = CFTYPE_NOT_ON_ROOT,
++		.seq_show = freezer_read,
++		.write = freezer_write,
++	},
++	{
++		.name = "self_freezing",
++		.flags = CFTYPE_NOT_ON_ROOT,
++		.read_u64 = freezer_self_freezing_read,
++	},
++	{
++		.name = "parent_freezing",
++		.flags = CFTYPE_NOT_ON_ROOT,
++		.read_u64 = freezer_parent_freezing_read,
++	},
++	{ }	/* terminate */
++};
++
++struct cgroup_subsys freezer_cgrp_subsys = {
++	.css_alloc	= freezer_css_alloc,
++	.css_online	= freezer_css_online,
++	.css_offline	= freezer_css_offline,
++	.css_free	= freezer_css_free,
++	.attach		= freezer_attach,
++	.fork		= freezer_fork,
++	.legacy_cftypes	= files,
++#ifdef CONFIG_SAMSUNG_FREECESS
++	.can_attach   = freezer_can_attach,
++	.cancel_attach  = freezer_cancel_attach,
++#endif
++};
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 13e877348fe225a7e96389144952473d93c1b298..6f23c633b4b6a292c67851242c9fb37056f9f984 100755
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -1161,7 +1161,9 @@ static int wait_for_vfork_done(struct task_struct *child,
+ 	int killed;
+ 
+ 	freezer_do_not_count();
++	cgroup_enter_frozen();
+ 	killed = wait_for_completion_killable(vfork);
++	cgroup_leave_frozen(false);
+ 	freezer_count();
+ 
+ 	if (killed) {
+diff --git a/kernel/signal.c b/kernel/signal.c
+index 2ecc92cb9124edc5430166eb3eef87ae36f315d4..4bb09a12e9461c05635ad1b5efd0caa8a6c8eeee 100755
+--- a/kernel/signal.c
++++ b/kernel/signal.c
+@@ -44,6 +44,7 @@
+ #include <linux/posix-timers.h>
+ #include <linux/oom.h>
+ #include <linux/capability.h>
++#include <linux/cgroup.h>
+ 
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/signal.h>
+@@ -157,9 +158,10 @@ static inline int has_pending_signals(sigset_t *signal, sigset_t *blocked)
+ 
+ static int recalc_sigpending_tsk(struct task_struct *t)
+ {
+-	if ((t->jobctl & JOBCTL_PENDING_MASK) ||
++	if ((t->jobctl & (JOBCTL_PENDING_MASK | JOBCTL_TRAP_FREEZE)) ||
+ 	    PENDING(&t->pending, &t->blocked) ||
+-	    PENDING(&t->signal->shared_pending, &t->blocked)) {
++	    PENDING(&t->signal->shared_pending, &t->blocked) ||
++	    cgroup_task_frozen(t)) {
+ 		set_tsk_thread_flag(t, TIF_SIGPENDING);
+ 		return 1;
+ 	}
+@@ -1993,7 +1995,9 @@ static void ptrace_stop(int exit_code, int why, int clear_code, siginfo_t *info)
+ 		preempt_disable();
+ 		read_unlock(&tasklist_lock);
+ 		preempt_enable_no_resched();
++		cgroup_enter_frozen();
+ 		freezable_schedule();
++		cgroup_leave_frozen(true);
+ 	} else {
+ 		/*
+ 		 * By the time we got the lock, our tracer went away.
+@@ -2171,6 +2175,7 @@ static bool do_signal_stop(int signr)
+ 		}
+ 
+ 		/* Now we don't run again until woken by SIGCONT or SIGKILL */
++		cgroup_enter_frozen();
+ 		freezable_schedule();
+ 		return true;
+ 	} else {
+@@ -2217,6 +2222,43 @@ static void do_jobctl_trap(void)
+ 	}
+ }
+ 
++/**
++ * do_freezer_trap - handle the freezer jobctl trap
++ *
++ * Puts the task into frozen state, if only the task is not about to quit.
++ * In this case it drops JOBCTL_TRAP_FREEZE.
++ *
++ * CONTEXT:
++ * Must be called with @current->sighand->siglock held,
++ * which is always released before returning.
++ */
++static void do_freezer_trap(void)
++	__releases(&current->sighand->siglock)
++{
++	/*
++	 * If there are other trap bits pending except JOBCTL_TRAP_FREEZE,
++	 * let's make another loop to give it a chance to be handled.
++	 * In any case, we'll return back.
++	 */
++	if ((current->jobctl & (JOBCTL_PENDING_MASK | JOBCTL_TRAP_FREEZE)) !=
++	     JOBCTL_TRAP_FREEZE) {
++		spin_unlock_irq(&current->sighand->siglock);
++		return;
++	}
++
++	/*
++	 * Now we're sure that there is no pending fatal signal and no
++	 * pending traps. Clear TIF_SIGPENDING to not get out of schedule()
++	 * immediately (if there is a non-fatal signal pending), and
++	 * put the task into sleep.
++	 */
++	__set_current_state(TASK_INTERRUPTIBLE);
++	clear_thread_flag(TIF_SIGPENDING);
++	spin_unlock_irq(&current->sighand->siglock);
++	cgroup_enter_frozen();
++	freezable_schedule();
++}
++
+ static int ptrace_signal(int signr, siginfo_t *info)
+ {
+ 	/*
+@@ -2328,6 +2370,10 @@ int get_signal(struct ksignal *ksig)
+ 		trace_signal_deliver(SIGKILL, SEND_SIG_NOINFO,
+ 				&sighand->action[SIGKILL - 1]);
+ 		recalc_sigpending();
++		current->jobctl &= ~JOBCTL_TRAP_FREEZE;
++		spin_unlock_irq(&sighand->siglock);
++		if (unlikely(cgroup_task_frozen(current)))
++			cgroup_leave_frozen(true);
+ 		goto fatal;
+ 	}
+ 
+@@ -2338,9 +2384,24 @@ int get_signal(struct ksignal *ksig)
+ 		    do_signal_stop(0))
+ 			goto relock;
+ 
+-		if (unlikely(current->jobctl & JOBCTL_TRAP_MASK)) {
+-			do_jobctl_trap();
++		if (unlikely(current->jobctl &
++			     (JOBCTL_TRAP_MASK | JOBCTL_TRAP_FREEZE))) {
++			if (current->jobctl & JOBCTL_TRAP_MASK) {
++				do_jobctl_trap();
++				spin_unlock_irq(&sighand->siglock);
++			} else if (current->jobctl & JOBCTL_TRAP_FREEZE)
++				do_freezer_trap();
++
++			goto relock;
++		}
++
++		/*
++		 * If the task is leaving the frozen state, let's update
++		 * cgroup counters and reset the frozen bit.
++		 */
++		if (unlikely(cgroup_task_frozen(current))) {
+ 			spin_unlock_irq(&sighand->siglock);
++			cgroup_leave_frozen(false);
+ 			goto relock;
+ 		}
+ 
+@@ -2434,8 +2495,8 @@ int get_signal(struct ksignal *ksig)
+ 			continue;
+ 		}
+ 
+-	fatal:
+ 		spin_unlock_irq(&sighand->siglock);
++	fatal:
+ 
+ 		/*
+ 		 * Anything else is fatal, maybe with a core dump.

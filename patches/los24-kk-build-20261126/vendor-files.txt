@@ -1,0 +1,11 @@
+etc/audio_policy_configuration.xml
+etc/ueventd.rc
+etc/selinux/vendor_sepolicy.cil
+etc/selinux/precompiled_sepolicy
+etc/selinux/precompiled_sepolicy.plat_sepolicy_and_mapping.sha256
+etc/selinux/precompiled_sepolicy.system_ext_sepolicy_and_mapping.sha256
+etc/selinux/precompiled_sepolicy.product_sepolicy_and_mapping.sha256
+etc/selinux/plat_pub_versioned.cil
+etc/selinux/plat_sepolicy_vers.txt
+etc/selinux/genfs_labels_version.txt
+etc/vintf/manifest.xml

@@ -1,0 +1,24 @@
+diff --git a/sepolicy/vendor/beyondq-hardware.te b/sepolicy/vendor/beyondq-hardware.te
+--- a/sepolicy/vendor/beyondq-hardware.te
++++ b/sepolicy/vendor/beyondq-hardware.te
+@@ -53,5 +53,7 @@
+ allow hal_usb_default sysfs_battery:dir search;
+ 
+ # The camera provider opens the rear torch control with O_RDWR.
+-type beyondq_camera_torch, fs_type, sysfs_type;
+-allow hal_camera_default beyondq_camera_torch:file { getattr open read write };
++not_recovery(`
++    type beyondq_camera_torch, fs_type, sysfs_type;
++    allow hal_camera_default beyondq_camera_torch:file { getattr open read write };
++')
+diff --git a/sepolicy/vendor/genfs_contexts b/sepolicy/vendor/genfs_contexts
+--- a/sepolicy/vendor/genfs_contexts
++++ b/sepolicy/vendor/genfs_contexts
+@@ -26,4 +26,6 @@
+ genfscon sysfs /devices/virtual/sec/sec-wf-thermistor/temperature u:object_r:beyondq_thermistor:s0
+ 
+ # Rear torch control used by the HXE1 camera provider.
+-genfscon sysfs /devices/virtual/camera/flash/rear_flash u:object_r:beyondq_camera_torch:s0
++not_recovery(`
++    genfscon sysfs /devices/virtual/camera/flash/rear_flash u:object_r:beyondq_camera_torch:s0
++')

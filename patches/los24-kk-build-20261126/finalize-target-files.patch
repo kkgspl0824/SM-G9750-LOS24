@@ -1,0 +1,76 @@
+diff --git a/finalize-target-files.py b/finalize-target-files.py
+--- a/finalize-target-files.py
++++ b/finalize-target-files.py
+@@ -1,5 +1,5 @@
+ #!/usr/bin/env python3
+-"""Put generated Recovery resources into the fixed vendor seed before release."""
++"""Install the current Recovery, media fixes and SELinux policy into the verified vendor seed."""
+ from pathlib import Path
+ import argparse
+ import copy
+@@ -13,6 +13,7 @@
+ import subprocess
+ import tempfile
+ import zipfile
++from xml.etree import ElementTree as ET
+ 
+ 
+ def sha(path):
+@@ -38,7 +39,7 @@
+     args = parser.parse_args()
+     source = args.source.resolve()
+     args.input, args.output, args.report = (p.resolve() for p in (args.input, args.output, args.report))
+-    kit = Path(__file__).resolve().parents[1]
++    kit = Path(os.environ["SMG9750_BASELINE_KIT"]).resolve()
+     manifest = json.loads((kit / 'metadata/restore-manifest.json').read_text())
+     seed = manifest['prebuilt_vendor_links']['vendor/samsung/sm8150-common/prebuilt/vendor.img']['sha256']
+     assert not args.output.exists() and args.input.resolve() != args.output.resolve()
+@@ -60,7 +61,12 @@
+         raw = work / 'vendor.img'
+         sparse = work / 'vendor-sparse.img'
+         blockmap = work / 'vendor.map'
+-        changed = ['/etc/recovery.img', '/bin/install-recovery.sh']
++        recovery = ['/etc/recovery.img', '/bin/install-recovery.sh']
++        generated = (source / 'out/target/product/beyond2qlte/vendor').resolve()
++        candidates = ['/' + path for path in
++                      Path(os.environ['SMG9750_VENDOR_FILES']).read_text().splitlines()]
++        assert candidates and len(candidates) == len(set(candidates))
++        changed = recovery.copy()
+         with zipfile.ZipFile(args.input) as archive:
+             names = archive.namelist()
+             assert len(names) == len(set(names))
+@@ -81,6 +87,26 @@
+                 content.write_bytes(archive.read(member))
+                 contents[path] = content
+             assert hashlib.sha256(archive.read('IMAGES/recovery.img')).hexdigest() == sha(contents['/etc/recovery.img'])
++            for path in candidates:
++                member = 'VENDOR' + path
++                assert stat.S_IFMT(archive.getinfo(member).external_attr >> 16) in (0, stat.S_IFREG)
++                content = (generated / path.lstrip('/')).resolve()
++                assert generated in content.parents and content.is_file() and content.stat().st_size
++                if sha(content) != hashlib.sha256(archive.read(member)).hexdigest():
++                    contents[path] = content
++                    changed.append(path)
++            assert b'beyondq_camera_torch' in (generated / 'etc/selinux/vendor_sepolicy.cil').read_bytes()
++            assert b'/sys/devices/virtual/camera/flash rear_flash 0600 cameraserver camera' in (generated / 'etc/ueventd.rc').read_bytes()
++            assert b'<module name="bluetooth" halVersion="2.0">' in (
++                generated / 'etc/audio_policy_configuration.xml').read_bytes()
++            device_manifest = ET.parse(generated / 'etc/vintf/manifest.xml').getroot()
++            assert device_manifest.get('type') == 'device' and device_manifest.get('target-level') == '4'
++            provider = [hal for hal in device_manifest.findall('hal')
++                        if hal.findtext('name') == 'android.hardware.bluetooth.audio']
++            assert len(provider) == 1 and provider[0].get('format') == 'hidl'
++            assert provider[0].findtext('transport') == 'hwbinder'
++            assert provider[0].findtext('fqname') == '@2.0::IBluetoothAudioProvidersFactory/default'
++            assert '/etc/vintf/manifest.xml' in changed
+ 
+         run([tools['simg2img'], sparse, raw])
+         partition_size = raw.stat().st_size
+@@ -151,6 +177,7 @@
+         run([tools['img2simg'], raw, sparse])
+         rebuilt_vendor_sha = sha(sparse)
+         replacements = {'IMAGES/vendor.img': sparse, 'IMAGES/vendor.map': blockmap}
++        replacements.update({'VENDOR' + path: contents[path] for path in changed if path in candidates})
+         omitted = {'IMAGES/vbmeta.img', 'META/vbmeta_digest.txt'}
+         staged = work / 'target-files.zip'
+         baseline = {}

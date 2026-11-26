@@ -1,0 +1,64 @@
+{
+  "baseline": "LOS24 runtimefix8 NFC rebuildfix2",
+  "base_patch_dir": "../los24-runtimefix8-nfc-rebuildfix2",
+  "official_manifest_commit": "913c6baa35ffa32be9ae33368cac69dbec6ead4b",
+  "pinned_manifest": {
+    "file": "../../manifests/lineage24-kk-build-20261126-pinned.xml",
+    "sha256": "2be3e7c506c9344d46570ae9c7127771b0c0cc26ca880e29edb4761d52730f96",
+    "projects": 1250
+  },
+  "kernel_release": "4.14.190-kk-build",
+  "patches_in_apply_order": [
+    {
+      "project": "device/samsung/beyond2qlte",
+      "head": "9d9e90df1a11b7ca72f76c6553cc5eb5558c8549",
+      "patch": "device-samsung-beyond2qlte.patch",
+      "sha256": "f4f8d03dc7257efec331e2e6c32412b6b6fd979860980a6251ac2ee143812401"
+    },
+    {
+      "project": "device/samsung/beyond2qlte",
+      "head": "9d9e90df1a11b7ca72f76c6553cc5eb5558c8549",
+      "patch": "bluetooth-audio-manifest.patch",
+      "sha256": "dec761a82f4afe6213b1c19b76f2a6b5caa2e8c3ea862e90d97c3ac5ffa8b6da"
+    },
+    {
+      "project": "device/samsung/sm8150-common",
+      "head": "88dd5e0b565762ec6c132a362771f4013d6f65a5",
+      "patch": "device-samsung-sm8150-common.patch",
+      "sha256": "5d7bb639e5516f987291a17da380eee9a0df58eab965b21f5cfc56a510691c0d"
+    },
+    {
+      "project": "device/samsung/sm8150-common",
+      "head": "88dd5e0b565762ec6c132a362771f4013d6f65a5",
+      "patch": "guard-recovery.patch",
+      "sha256": "6c202deb52c774205d2698addff514b0d734c559e2cee3220163f030f983e2c7"
+    },
+    {
+      "project": "kernel/samsung/sm8150-common",
+      "head": "d1d9579baf3fc993b91d8ee22227fbb50464c8b4",
+      "patch": "kernel414-cgroup-v2-binder-freezer.patch",
+      "sha256": "ee8939eb9f120ae83851d7d94066839bfa76a8bc698b21e57040bbb7079fec3d"
+    },
+    {
+      "project": "kernel/samsung/sm8150-common",
+      "head": "d1d9579baf3fc993b91d8ee22227fbb50464c8b4",
+      "patch": "kernel414-kk-build-localversion.patch",
+      "sha256": "e3856c4277be00729affd946fdd44879e690e4698468d8e16b97a6093deca10a"
+    },
+    {
+      "project": "device/samsung/beyond2qlte",
+      "head": "9d9e90df1a11b7ca72f76c6553cc5eb5558c8549",
+      "patch": "device-kk-build-localversion.patch",
+      "sha256": "cfe59fc7c2016ab2fba0762c83c47c74aa912e83866b5a1d84a872e19064103a"
+    }
+  ],
+  "vendor_packaging": {
+    "base_tool": "../../rebuild/SM-G9750-LOS24-runtimefix8-nfc-rebuildfix2-20261113/tools/finalize-target-files.py",
+    "base_tool_sha256": "884a3ef34a34ef28619e48e60ae4bba93c5068055d5ad5ae53cad10b2129bc40",
+    "patch": "finalize-target-files.patch",
+    "patch_sha256": "4dd8fce2bd91cddf4dca055183894a0a901a4f33cfc4b497182b88cf05a30537",
+    "patched_tool_sha256": "66214093b5fc50dcb1966cb4ae283bf12adf63ae47cd0b7c5d79748c60151421",
+    "vendor_files": "vendor-files.txt",
+    "vendor_files_sha256": "d423d8608b48fe13a23da43a46a35ec431fd1f51f1455c79f8104420c9d320db"
+  }
+}

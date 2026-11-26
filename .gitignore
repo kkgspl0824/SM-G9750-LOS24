@@ -8,12 +8,14 @@
 /manifests/*
 !/manifests/lineage24-runtimefix8-pinned.xml
 !/manifests/lineage24-runtimefix8-nfc-pinned.xml
+!/manifests/lineage24-kk-build-20261126-pinned.xml
 
 !/patches/
 /patches/*
 !/patches/los24-runtimefix8/
 !/patches/los24-runtimefix8-nfc/
 !/patches/los24-runtimefix8-nfc-rebuildfix2/
+!/patches/los24-kk-build-20261126/
 
 !/source/
 
