@@ -1,0 +1,62 @@
+{
+  "name": "los24-power-opt-20261127",
+  "target": "SM-G9750 / beyond2qlte (Qualcomm SM8150)",
+  "android_version": "Android 17 / LineageOS 24.0 / SDK 37",
+  "kernel_release": "4.14.190-kk-build",
+  "official_manifest_commit": "913c6baa35ffa32be9ae33368cac69dbec6ead4b",
+  "base_patch_set": "patches/los24-kk-build-20261126",
+  "build_datetime": 1795661458,
+  "build_number": "eng.user.los24.20261126.kk",
+  "projects": {
+    "device/samsung/beyond2qlte": {
+      "head": "9d9e90df1a11b7ca72f76c6553cc5eb5558c8549",
+      "patch": "device-samsung-beyond2qlte.patch",
+      "sha256": "60c71ea0d1f9dfdf59d10fdeaea098ff8da4680cb4cc49f98d97636701427ac2",
+      "type": "incremental_new_files_on_top_of_20261126",
+      "files": [
+        "overlay-product/frameworks/base/core/res/res/xml/power_profile.xml",
+        "rootdir/vendor-opt/bin/init.qcom.post_boot.sh",
+        "rootdir/vendor-opt/build.prop",
+        "rootdir/vendor-opt/default.prop",
+        "rootdir/vendor-opt/etc/fstab.ramplus",
+        "rootdir/vendor-opt/etc/init/android.hardware.wifi.supplicant-service.rc",
+        "rootdir/vendor-opt/etc/init/hw/init.beyond2q.rc",
+        "rootdir/vendor-opt/etc/init/init.ramplus.rc",
+        "rootdir/vendor-opt/etc/init/wifi_brcm.rc",
+        "rootdir/vendor-opt/etc/powerhint.json"
+      ]
+    },
+    "device/samsung/sm8150-common": {
+      "head": "88dd5e0b565762ec6c132a362771f4013d6f65a5",
+      "patch": "device-samsung-sm8150-common.patch",
+      "sha256": "d3d342e95fb5836fccb773b77c775abaddb75ed6fce4efc75e45884ac8518538",
+      "type": "incremental_diff_on_top_of_20261126",
+      "files": [
+        "sepolicy/vendor/beyondq-hardware.te",
+        "sepolicy/vendor/genfs_contexts"
+      ]
+    },
+    "kernel/samsung/sm8150-common": {
+      "head": "d1d9579baf3fc993b91d8ee22227fbb50464c8b4",
+      "net_change_vs_20261126": false,
+      "note": "CONFIG_ARM64_LSE_ATOMICS=y tested in Attempt 1 failed spinlock.o assembly constraint and was reverted cleanly."
+    }
+  },
+  "packaging": {
+    "vendor_files": "vendor-files.txt",
+    "vendor_files_sha256": "d423d8608b48fe13a23da43a46a35ec431fd1f51f1455c79f8104420c9d320db",
+    "finalize_patch": "finalize-target-files.patch",
+    "finalize_patch_sha256": "3197961ba89b1669fe40425af86f50ee5251c3991924f4e77e5003face5cb926",
+    "finalize_patch_base": "rebuild/SM-G9750-LOS24-runtimefix8-nfc-rebuildfix2-20261113/tools/finalize-target-files.py"
+  },
+  "artifacts": {
+    "dir": "artifacts/sm-g9750-lineage24-power-opt-20261127",
+    "rom": "lineage-24.0-20261127-UNOFFICIAL-beyond2qlte.zip",
+    "rom_bytes": 1833069405,
+    "rom_sha256": "28941be2692e1a2fa1226fd13e2a0215c66b5508d4a96634fde6d7b6909ac285",
+    "target_files": "target-files.zip",
+    "target_files_bytes": 3970540030,
+    "target_files_sha256": "dc80c136214509b608b8793a52fc1a00a65ee5b18e7d6cb7f353230046af264a",
+    "pinned_manifest_sha256": "2be3e7c506c9344d46570ae9c7127771b0c0cc26ca880e29edb4761d52730f96"
+  }
+}

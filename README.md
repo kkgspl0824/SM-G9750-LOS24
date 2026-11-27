@@ -6,6 +6,7 @@
 
 | 位置 | 内容 |
 | --- | --- |
+| [功耗与性能优化增量补丁](patches/los24-power-opt-20261127) | 基于 kk-build 固定清单的 CPU 调频/PowerHint、4 GiB ZRAM、RCU/sched_boost 复位、Wi-Fi 日志精简、cortex-a76 架构属性、power_profile.xml RRO 及 vendor 封包更新。 |
 | [kk-build 固定清单](manifests/lineage24-kk-build-20261126-pinned.xml) | 2026-11-26 完整 OTA 使用的 1,250 个源码项目提交。 |
 | [kk-build 增量补丁](patches/los24-kk-build-20261126) | 快捷手电筒、蓝牙媒体、cgroup v2 和 Binder 冻结、内核版本后缀及 vendor 封包更新。 |
 | [NFC 修订版固定清单](manifests/lineage24-runtimefix8-nfc-pinned.xml) | 旧版 1,249 个源码项目的固定提交。 |
@@ -29,3 +30,4 @@
 - **镜像与OTA封装**：统一vendor中的Recovery资源和安装脚本引用，提供运行文件/镜像严格比较、AVB/VINTF、OTA签名及完整数据重建校验。
 - **快捷手电筒与蓝牙媒体**：补齐后置手电筒节点访问权限、A2DP 路由和 HIDL 音频服务声明。2026-11-26 版通过手机系统更新器本地安装，蓝牙耳机播放有声。
 - **应用冻结**：为 4.14 内核补充 cgroup v2 freezer 和 Binder 冻结接口。已在前一版实测 TikTok 锁屏后自动冻结，2026-11-26 版内核版本为 `4.14.190-kk-build`。
+- **功耗与性能调优（2026-11-27）**：释放 `policy0` 300 MHz 最低频并将 `LAUNCH` Hint 缩至 2000ms，优化三簇 `schedutil` 限流与 `pl=0`，ZRAM 扩容至 4 GiB（`lz4`、`page-cluster=0`、`swappiness=100`），开机后关闭 `rcu_expedited`/归零 `sched_boost` 并补充仅限 `not_recovery` 的 `beyondq_sysfs_rcu` SELinux 规则，关闭 Wi-Fi `-dd`/`.logtrace.info` 与残留调试属性，切换 `cortex-a76` 运行时变体并补全 `power_profile.xml` 电量模型。2026-11-27 已通过手机本地 OTA 安装并完成实机回读核验。
